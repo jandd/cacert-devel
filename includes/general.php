@@ -872,18 +872,33 @@
 
 	function generatecertpath($type,$kind,$id)
 	{
-		$name="../$type/$kind-".intval($id).".$type";
+		global $csr_dir, $crt_dir;
+		switch ($type) {
+			case "csr":
+				$basedir = $csr_dir;
+				break;
+			case "crt":
+				$basedir = $crt_dir;
+				break;
+			default:
+				die(sprintf("invalid type %s", $type));
+		}
+		$name= sprintf("%s/%s-%s.%s", $basedir, $kind, intval($id), $type);
 		$newlayout=1;
 		if($newlayout)
 		{
-			$name="../$type/$kind/".intval($id/1000)."/$kind-".intval($id).".$type";
-			if (!is_dir("../csr")) { mkdir("../csr",0777); }
-			if (!is_dir("../crt")) { mkdir("../crt",0777); }
+			$name= sprintf("%s/%s/%s/%s-%s.%s", $basedir, $kind, intval($id / 1000), $kind, intval($id), $type);
+			if (!is_dir("$csr_dir")) { mkdir($csr_dir,0777); }
+			if (!is_dir("$crt_dir")) { mkdir($crt_dir,0777); }
 
-			if (!is_dir("../csr/$kind")) { mkdir("../csr/$kind",0777); }
-			if (!is_dir("../crt/$kind")) { mkdir("../crt/$kind",0777); }
-			if (!is_dir("../csr/$kind/".intval($id/1000))) { mkdir("../csr/$kind/".intval($id/1000)); }
-			if (!is_dir("../crt/$kind/".intval($id/1000))) { mkdir("../crt/$kind/".intval($id/1000)); }
+			if (!is_dir("$csr_dir/$kind")) { mkdir(sprintf("%s/%s", $csr_dir, $kind),0777); }
+			if (!is_dir("$crt_dir/$kind")) { mkdir(sprintf("%s/%s", $crt_dir, $kind),0777); }
+			if (!is_dir("$csr_dir/$kind/".intval($id/1000))) {
+				mkdir(sprintf("%s/%s/%s", $csr_dir, $kind, intval($id / 1000)));
+			}
+			if (!is_dir("$crt_dir/$kind/".intval($id/1000))) {
+				mkdir(sprintf("%s/%s/%s", $crt_dir, $kind, intval($id / 1000)));
+			}
 		}
 		return $name;
 	}

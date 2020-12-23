@@ -836,7 +836,10 @@ function buildSubjectFromSession() {
 			exit;
 		}
 
-		$db_conn->query($query);
+		$res = $db_conn->query($query);
+		if ($db_conn->errno) {
+			die($db_conn->error);
+		}
 		$CSRid = $db_conn->insert_id;
 
 		if(is_array($_SESSION['_config']['rowid']))
@@ -844,15 +847,17 @@ function buildSubjectFromSession() {
 				$db_conn->query("insert into `domlink` set `certid`='$CSRid', `domid`='$dom'");
 		if(is_array($_SESSION['_config']['altid']))
 		foreach($_SESSION['_config']['altid'] as $dom)
-			$db_conn->query("insert into `domlink` set `certid`='$CSRid', `domid`='$dom'");
+			$db_conn->query(sprintf("INSERT INTO domlink SET certid='%s', domid='%s'", $CSRid, $dom));
 
 		$CSRname=generatecertpath("csr","server",$CSRid);
 		rename($_SESSION['_config']['tmpfname'], $CSRname);
 		chmod($CSRname,0644);
-		$db_conn->query("update `domaincerts` set `CSR_name`='$CSRname' where `id`='$CSRid'");
+		$db_conn->query(sprintf("UPDATE domaincerts SET CSR_name='%s' WHERE id = '%s'", $CSRname, $CSRid));
+		if ($db_conn->errno) {
+			die($db_conn->error);
+		}
 		waitForResult("domaincerts", $CSRid, 11);
-		$query = "select * from `domaincerts` where `id`='$CSRid' and `crt_name` != ''";
-		$res = $db_conn->query($query);
+		$res = $db_conn->query(sprintf("SELECT * FROM domaincerts WHERE id = '%s' AND crt_name != ''", $CSRid));
 		if($res->num_rows <= 0)
 		{
 			$id = 11;

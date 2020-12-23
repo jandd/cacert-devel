@@ -47,6 +47,9 @@ $default_host = sprintf("%s%s", getenv("DEFAULT_HOSTNAME"), $https_port ? ":" . 
 $secure_host = sprintf("%s%s", getenv("SECURE_HOSTNAME"), $https_port ? ":" . $https_port : "");
 $tverify_host = sprintf("%s%s", getenv("TVERIFY_HOSTNAME"), $https_port ? ":" . $https_port : "");
 
+$csr_dir = getenv("CSR_DIRECTORY");
+$crt_dir = getenv("CRT_DIRECTORY");
+
 $base_urls = ["insecure" => sprintf("http://%s", $insecure_host), "normal" => sprintf("https://%s", $default_host),
 	"secure" => sprintf("https://%s", $secure_host), "tverify" => sprintf("https://%s", $tverify_host)];
 
