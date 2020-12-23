@@ -40,15 +40,11 @@ my $paranoid=1;
 
 my $debug=0;
 
-#my $serialport="/dev/ttyS0";
-my $serialport="/dev/ttyUSB0";
+my $serialport=$ENV{"SERIAL_PORT"};
 
 my $gpgbin="/usr/bin/gpg";
 
 my $opensslbin="/usr/bin/openssl";
-
-
-my $mysqlphp="/home/cacert/www/includes/mysql.php";
 
 my %revokefile=(2=>"../www/class3-revoke.crl",1=>"../www/revoke.crl");
 
@@ -61,25 +57,11 @@ my $newlayout=1;
 
 my %monarr = ("Jan" => 1, "Feb" => 2, "Mar" => 3, "Apr" => 4, "May" => 5, "Jun" => 6, "Jul" => 7, "Aug" => 8, "Sep" => 9, "Oct" => 10, "Nov" => 11, "Dec" => 12);
 
-
-my $password="";
-if(open IN,"<$mysqlphp")
-{
-  my $content="";
-undef $/;
-$content=<IN>;
-$password=$1 if($content=~m/mysql_connect\s*\("[^"]+",\s*"\w+",\s*"(\w+)"/);
-close IN;
-$/="\n";
-
-}
-else
-{
-  die "Could not read file: $!\n";
-}
-
-
-my $dbh = DBI->connect("DBI:mysql:cacert:localhost","cacert",$password, { RaiseError => 1, AutoCommit => 1 }) || die ("Error with the database connection.\n");
+my $dbh = DBI->connect(
+        "DBI:mysql:$ENV{'MYSQL_WEBDB_DATABASE'}:$ENV{'MYSQL_WEBDB_HOSTNAME'}",
+        $ENV{'MYSQL_WEBDB_USER'},
+        $ENV{'MYSQL_WEBDB_PASSWORD'},
+                { RaiseError => 1, AutoCommit => 1 }) || die ("Error with the database connection.\n");
 
 sub readfile($)
 {

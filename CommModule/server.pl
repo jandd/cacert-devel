@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-# (c) 2006-2007 by CAcert.org
+# (c) 2006-2020 by CAcert.org
 
 # Server (running on the certificate machine)
 
@@ -12,7 +12,7 @@ use File::CounterFile;
 use Time::HiRes q(usleep);
 use IPC::Open3;
 use File::Copy;
-use Digest::SHA1 qw(sha1_hex);
+use Digest::SHA qw(sha1_hex);
 
 #Protocol version:
 my $ver=1;
@@ -21,8 +21,7 @@ my $debug=0;
 
 my $paranoid=1;
 
-my $serialport="/dev/ttyUSB0";
-#my $serialport="/dev/ttyS0";
+my $serialport=$ENV{'SERIAL_PORT'};
 
 my $CPSUrl="http://www.cacert.org/cps.php";
 
@@ -32,7 +31,8 @@ my $gpgbin="/usr/bin/gpg";
 
 my $opensslbin="/usr/bin/openssl";
 
-my $work="./work";
+my $work=$ENV{'SIGNER_WORKDIR'} || './work';
+my $ca_conf=$ENV{'SIGNER_CA_CONFIG'} || '/etc/ssl';
 
 #my $gpgID='gpgtest@cacert.at';
 my $gpgID='gpg@cacert.org';
@@ -444,19 +444,19 @@ sub X509ConfigFile($$)
   my $opensslcnf="";
   if($root==0)
   {
-    $opensslcnf="/etc/ssl/openssl-$templates{$template}";
+    $opensslcnf="$ca_conf/openssl-$templates{$template}";
   }
   elsif($root==1)
   {
-    $opensslcnf="/etc/ssl/class3-$templates{$template}";
+    $opensslcnf="$ca_conf/class3-$templates{$template}";
   }
   elsif($root==2)
   {
-    $opensslcnf="/etc/ssl/class3s-$templates{$template}";
+    $opensslcnf="$ca_conf/class3s-$templates{$template}";
   }
   else
   {
-    $opensslcnf="/etc/ssl/root$root/$templates{$template}";
+    $opensslcnf="$ca_conf/root$root/$templates{$template}";
   }
   # Check that the config file exists
   Error "Config file does not exist: $opensslcnf!" unless (-f $opensslcnf);
@@ -467,7 +467,7 @@ sub X509ConfigFile($$)
 sub CreateWorkspace()
 {
   mkdir "$work",0700;
-  my $id = (new File::CounterFile "./$work/.counter", "0")->inc;
+  my $id = (new File::CounterFile "$work/.counter", "0")->inc;
   mkdir "$work/".int($id/1000),0700;
   mkdir "$work/".int($id/1000)."/".($id%1000),0700;
   my $wid="$work/".int($id/1000)."/".($id%1000);
