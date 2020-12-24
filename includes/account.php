@@ -670,7 +670,7 @@ function buildSubjectFromSession() {
 		$domainid = $db_conn->insert_id;
 
 		$body = sprintf(_("Below is the link you need to open to verify your domain '%s'. Once your address is verified you will be able to start issuing certificates to your heart's content!"),$_SESSION['_config']['domain'])."\n\n";
-		$body .= build_verify_url(["type" => domain, "domainid"=>$domainid,"hash"=>$hash]) . "\n\n";
+		$body .= build_verify_url(["type" => "domain", "domainid"=>$domainid,"hash"=>$hash]) . "\n\n";
 		$body .= _("Best regards")."\n"._("CAcert.org Support!");
 
 		sendmail($authaddy, "[CAcert.org] "._("Email Probe"), $body, "support@cacert.org", "", "", "CAcert Support");
