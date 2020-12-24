@@ -40,7 +40,7 @@ my $ver = 1;
 
 my $paranoid = 1;
 
-my $debug = 1;
+my $debug = 0;
 my $log_stdout = 1;
 
 my $serialport = $ENV{"SERIAL_PORT"};

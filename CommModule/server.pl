@@ -18,7 +18,7 @@ use Digest::SHA qw(sha1_hex);
 #Protocol version:
 my $ver = 1;
 
-my $debug = 1;
+my $debug = 0;
 my $log_stdout = 1;
 
 my $paranoid = 1;
