@@ -18,8 +18,10 @@ use Digest::SHA qw(sha1_hex);
 #Protocol version:
 my $ver = 1;
 
-my $debug      = 0;
+# debug flag, set to 1 for increased logging, set to 2 to log bytes
+my $debug = 0;
 
+# enable logging to stdout
 my $log_stdout = 1;
 
 my $paranoid = 1;
@@ -42,9 +44,9 @@ my $ca_basedir = $ENV{'SIGNER_BASEDIR'}   || '.';
 my $gpgID = 'gpg@cacert.org';
 
 my %rootkeys = (
-  "1" => 5,    #X.509
-  "2" => 1
-);             #OpenPGP
+  "1" => 5,    # X.509
+  "2" => 1     # OpenPGP
+);
 my %hashes = (
   "0"  => "",
   "1"  => "-md md5",
@@ -69,14 +71,15 @@ my %templates = (
   "11" => "subca.cnf"
 );
 
-my $starttime = 5 * 60;    # 5 minutes
-
-#End of configurations
+#End of configuration
 
 ########################################################
 
-mkdir "$work", 0700;
-mkdir "$ca_basedir/currentcrls";
+# Global variables
+my $starttime   = 5 * 60;       # 5 minutes
+my $magic_bytes = "rie4Ech7";
+my Device::SerialPort $PortObj;
+my IO::Select $sel;
 
 $ENV{'PATH'}            = '/usr/bin/:/bin';
 $ENV{'IFS'}             = "\n";
@@ -134,13 +137,13 @@ sub pack3 {
 #unpack3 unpacks packed data.
 sub unpack3($) {
   return undef if ((not defined($_[0])) or length($_[0]) < 3);
-  SysLog("hexdump: " . hexdump("\x00" . substr($_[0], 0, 3)) . "\n")
-    if ($debug >= 1);
+  SysLog(sprintf("hexdump: %s\n", hexdump("\x00" . substr($_[0], 0, 3))))
+    if ($debug >= 2);
   my $len = unpack("N", "\x00" . substr($_[0], 0, 3));
-  SysLog("len3: $len length(): "
-      . length($_[0])
-      . " length()-3: "
-      . (length($_[0]) - 3) . "\n")
+  SysLog(sprintf(
+    "len3: %d length(): %d length()-3: %d\n",
+    $len, length($_[0]), (length($_[0]) - 3)
+  ))
     if ($debug >= 1);
   return undef if (length($_[0]) - 3 != $len);
   return substr($_[0], 3);
@@ -150,38 +153,32 @@ sub unpack3($) {
 sub unpack3array($) {
   my @retarr = ();
   if ((not defined($_[0])) or length($_[0]) < 3) {
-    SysLog "Datenanfang kaputt\n";
+    SysLog("Header data damaged\n");
     return ();
   }
   my $dataleft = $_[0];
   while (length($dataleft) >= 3) {
-    SysLog("hexdump: " . hexdump("\x00" . substr($dataleft, 0, 3)) . "\n")
-      if ($debug >= 1);
+    SysLog(sprintf("hexdump: %s\n", hexdump("\x00" . substr($dataleft, 0, 3))))
+      if ($debug >= 2);
     my $len = unpack("N", "\x00" . substr($dataleft, 0, 3));
-    SysLog("len3: $len length(): "
-        . length($dataleft)
-        . " length()-3: "
-        . (length($dataleft) - 3) . "\n")
+    SysLog(sprintf(
+      "len3: %d length(): %d length()-3: %d\n",
+      $len, length($dataleft), (length($dataleft) - 3)
+    ))
       if ($debug >= 1);
     if (length($dataleft) - 3 < $len) {
-      SysLog "Datensatz abgeschnitten\n";
+      SysLog("Data ended prematurely\n");
       return ();
     }
     push @retarr, substr($dataleft, 3, $len);
     $dataleft = substr($dataleft, 3 + $len);
   }
   if (length($dataleft) != 0) {
-    SysLog "Ende abgeschnitten\n";
+    SysLog("End of data block missing\n");
     return ();
   }
   return @retarr;
 }
-
-my $timestamp = POSIX::strftime("%Y-%m-%d %H:%M:%S", localtime);
-
-SysLog("Starting Server at $timestamp\n");
-
-SysLog("Opening Serial interface:\n");
 
 sub SerialSettings {
   my $PortObj = $_[0];
@@ -192,31 +189,14 @@ sub SerialSettings {
   $PortObj->stopbits(1);
 }
 
-#We have to open the SerialPort and close it again, so that we can bind it to a Handle
-my $PortObj = Device::SerialPort->new($serialport);
-SerialSettings($PortObj);
-$PortObj->save("serialserver.conf");
-undef $PortObj;
-
-$PortObj = tie(*SER, 'Device::SerialPort', "serialserver.conf")
-  || LogErrorAndDie("Can't tie using Configuration_File_Name: $!\n");
-
-LogErrorAndDie("Could not open Serial Interface!\n") if (not defined($PortObj));
-SerialSettings($PortObj);
-
-SysLog("Serial interface opened: $PortObj\n");
-
-#Creating select() selector for improved reading:
-my $sel = IO::Select->new(\*SER);
-
 #Raw send function over the Serial Interface  (+debugging)
 sub SendIt($) {
   return unless defined($_[0]);
-  SysLog "Sending " . length($_[0]) . "\n";    #hexdump($_[0])."\n";
-  my $data      = $_[0];
-  my $run_count = 0;
-  my $total     = 0;
-  my $mtu       = 30;
+  SysLog(sprintf("Sending %d\n",        length($_[0])))  if ($debug >= 1);
+  SysLog(sprintf("Bytes to send: %s\n", hexdump($_[0]))) if ($debug >= 2);
+  my $data  = $_[0];
+  my $total = 0;
+  my $mtu   = 30;
   while (length($data)) {
     my $iwrote = scalar($PortObj->write(substr($data, 0, $mtu))) || 0;
 
@@ -224,8 +204,11 @@ sub SendIt($) {
     usleep(270 * $iwrote + 9000);
     $total += $iwrote;
     $data = substr($data, $iwrote);
-    SysLog("i wrote: $iwrote total: $total left: " . length($data) . "\n")
-      if (!($run_count++ % 10));
+    SysLog(sprintf(
+      "i wrote: %d total: %d left: %d\n",
+      $iwrote, $total, length($data)
+    ))
+      if ($debug >= 1);
   }
 }
 
@@ -236,11 +219,12 @@ sub SendHandshakedParanoid($) {
 
   LogErrorAndDie "Handshake uncompleted. Connection lost!"
     if (!scalar($sel->can_read(2)));
-  my $data = "";
   usleep(1000000);
-  my $length = read SER, $data, 1;
+  my $data   = "";
+  my $length = 0;
+  $length = read SER, $data, 1;
   if ($length && $data eq "\x10") {
-    SysLog("OK ...\n");
+    SysLog("OK ...\n") if ($debug >= 1);
     my $xor = 0;
     foreach (0 .. length($_[0]) - 1) {
       $xor ^= unpack("C", substr($_[0], $_, 1));
@@ -248,7 +232,7 @@ sub SendHandshakedParanoid($) {
 
     my $try_again = 1;
     while ($try_again == 1) {
-      SendIt($_[0] . pack("C", $xor) . "rie4Ech7");
+      SendIt($_[0] . pack("C", $xor) . $magic_bytes);
 
       LogErrorAndDie
         "Packet receipt was not confirmed in 5 seconds. Connection lost!"
@@ -258,7 +242,7 @@ sub SendHandshakedParanoid($) {
       $length = read SER, $data, 1;
 
       if ($length && $data eq "\x10") {
-        SysLog "Sent successfully!...\n";
+        SysLog("Sent successfully!...\n") if ($debug >= 1);
         $try_again = 0;
       }
       elsif ($length && $data eq "\x11") {
@@ -277,16 +261,15 @@ sub SendHandshakedParanoid($) {
 }
 
 sub Receive {
-  my $data  = "";
-  my @ready = $sel->can_read(20);
-
+  my $data   = "";
+  my @ready  = $sel->can_read(20);
   my $length = read SER, $data, 1, 0;
 
-  #SysLog "Data: ".hexdump($data)."\n";
+  SysLog(sprintf("Data: %s\n", hexdump($data))) if ($debug >= 2);
 
   if ($data eq "\x02") {
     my $modus = 1;
-    SysLog "Start received, sending OK\n";
+    SysLog("Start received, sending OK\n") if ($debug >= 1);
     SendIt("\x10");
 
     my $block         = "";
@@ -298,29 +281,28 @@ sub Receive {
 
       $data = "";
       if (!scalar($sel->can_read(2))) {
-        SysLog("Timeout!\n");
+        SysLog("Timeout reading data!\n");
         return;
       }
       $length = read SER, $data, 100, 0;
       if ($length > 0) {
         $block .= $data;
       }
-
-      #SysLog("Received: $length ".length($block)."\n");
+      SysLog(sprintf("Received: %d %d\n", $length, length($block)))
+        if ($debug >= 1);
       $blockfinished = defined(unpack3(substr($block, 0, -9))) ? 1 : 0;
 
-      if (!$blockfinished and substr($block, -8, 8) eq "rie4Ech7") {
-        SysLog "BROKEN Block detected!";
+      if (!$blockfinished and substr($block, -8, 8) eq $magic_bytes) {
+        SysLog("BROKEN Block detected!\n");
         SendIt("\x11");
         $block         = "";
         $blockfinished = 0;
         $tries         = 10000;
       }
-
     }
-    SysLog "Block done: \n";    #.hexdump($block)."\n";
+    SysLog(sprintf("Block done: %s\n", hexdump($block))) if ($debug >= 2);
     SendIt("\x10");
-    SysLog "Returning block\n";
+    SysLog("Returning block\n") if ($debug >= 1);
     return ($block);
   }
   else {
@@ -408,7 +390,7 @@ sub X509ConfigFile($$) {
   }
 
   # Check that the config file exists
-  LogErrorAndDie "Config file does not exist: $opensslcnf!"
+  LogErrorAndDie("Config file does not exist: $opensslcnf!")
     unless (-f $opensslcnf);
   return $opensslcnf;
 }
@@ -477,15 +459,16 @@ sub SignX509($$$$$$$$) {
   }
 
   my $cmd = ($request =~ m/SPKAC\s*=/) ? "-spkac" : "-subj '$subject' -in";
-
   if (open OUT, ">$wid/request.csr") {
     print OUT $request;
     close OUT;
 
-    my $do =
-      `$opensslbin ca $hashes{$hash} -config $openssl_config $cmd $wid/request.csr -out $wid/output.crt -days $days -key test -batch $extfile 2>&1`;
-
-    SysLog $do;
+    my $command = sprintf(
+      "%s ca %s -config %s %s %s/request.csr -out %s/output.crt -days %d -key test -batch %s 2>&1",
+      $opensslbin, $hashes{$hash}, $openssl_config, $cmd, $wid, $wid, $days,
+      $extfile);
+    my $do = qw/$command/;
+    SysLog($do);
 
     if (open IN, "<$wid/output.crt") {
       undef $/;
@@ -541,12 +524,13 @@ sub SignOpenPGP {
     my $homedir = "$wid/";
 
     {
-      SysLog "Running GnuPG in $homedir...\n";
+      SysLog("Running GnuPG in $homedir...\n");
       my ($stdin, $stdout, $stderr) =
         (IO::Handle->new(), IO::Handle->new(), IO::Handle->new());
 
-      SysLog
-        "Importiere $gpgbin --no-tty --homedir $homedir --import $wid/request.key\n";
+      SysLog(
+        "Importiere $gpgbin --no-tty --homedir $homedir --import $wid/request.key\n"
+      );
 
       my $pid = open3($stdin, $stdout, $stderr,
         "$gpgbin --no-tty --homedir $homedir --command-fd 0 --status-fd 1 --logger-fd 2 --with-colons --import $wid/request.key"
@@ -865,28 +849,28 @@ sub RevokeX509 {
 }
 
 sub analyze($) {
-  SysLog("Analysiere ...\n");
-  SysLog(hexdump($_[0]) . "\n") if ($debug >= 1);
+  SysLog("Analysiere ...\n") if ($debug >= 1);
+  SysLog(hexdump($_[0]) . "\n") if ($debug >= 2);
 
   my @fields = unpack3array(substr($_[0], 3, -9));
-  LogErrorAndDie("Wrong number of parameters: " . scalar(@fields) . "\n")
+  LogErrorAndDie(sprintf("Wrong number of parameters: %d\n", scalar(@fields)))
     if (scalar(@fields) != 4);
 
-  SysLog("Header: " . hexdump($fields[0]) . "\n") if ($debug >= 1);
+  SysLog(sprintf("Header: %s\n", hexdump($fields[0]))) if ($debug >= 2);
   my @bytes = unpack("C*", $fields[0]);
 
   LogErrorAndDie("Header too short!\n") if (length($fields[0]) < 3);
-
-  LogErrorAndDie(
-    "Version mismatch. Server does not support version $bytes[0], server only supports version $ver!\n"
-  ) if ($bytes[0] != $ver);
-
-  LogErrorAndDie("Header has wrong length: " . length($fields[0]) . "!\n")
+  LogErrorAndDie(sprintf(
+    "Version mismatch. Server does not support version %d, server only supports version %d!\n",
+    $bytes[0], $ver
+  ))
+    if ($bytes[0] != $ver);
+  LogErrorAndDie(sprintf("Header has wrong length: %d! Should be 9 bytes.\n",
+    length($fields[0])))
     if (length($fields[0]) != 9);
 
-  if ($bytes[1] == 0)    # NUL Request
-  {
-    SysLog("NUL Request detected.\n");
+  if ($bytes[1] == 0) {
+    SysLog("Received NUL request\n");
     if ($fields[1] =~ /^\d+\.\d+$/) {
       open OUT, ">timesync.sh";
       print OUT "date -u '$fields[1]'\n";
@@ -894,10 +878,10 @@ sub analyze($) {
       close OUT;
     }
     Response($ver, 0, 0, 0, "", "", "");
+    SysLog("Handled NUL request\n");
   }
-  elsif ($bytes[1] == 1)    # Sign Request
-  {
-    SysLog("SignRequest detected...\n");
+  elsif ($bytes[1] == 1) {
+    SysLog("Received SIGN request\n");
     CheckSystem($bytes[2], $bytes[3], $bytes[4], $bytes[5]);
     if ($bytes[2] == 1) {
       SignX509($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7],
@@ -907,20 +891,48 @@ sub analyze($) {
       SignOpenPGP($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7],
         $bytes[8], $fields[1], $fields[2], $fields[3]);
     }
+    SysLog("Handled SIGN request\n");
   }
-  elsif ($bytes[1] == 2)    # Revocation Request
-  {
-    SysLog("Revocation Request ...\n");
+  elsif ($bytes[1] == 2) {
+    SysLog("Received REVOKE request\n");
     CheckSystem($bytes[2], $bytes[3], $bytes[4], $bytes[5]);
     if ($bytes[2] == 1) {
       RevokeX509($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7],
         $bytes[8], $fields[1], $fields[2], $fields[3]);
     }
+    SysLog("Handled REVOKE request\n");
   }
   else {
     LogErrorAndDie("Unknown command\n");
   }
 }
+
+# Start of execution
+my $timestamp = POSIX::strftime("%Y-%m-%d %H:%M:%S", localtime);
+SysLog("Starting Server at $timestamp\n");
+
+mkdir "$work", 0700;
+mkdir "$ca_basedir/currentcrls";
+
+SysLog("Opening Serial interface:\n");
+
+#We have to open the SerialPort and close it again, so that we can bind it to a Handle
+$PortObj = Device::SerialPort->new($serialport);
+SerialSettings($PortObj);
+$PortObj->save("serialserver.conf");
+
+undef $PortObj;
+
+$PortObj = tie(*SER, 'Device::SerialPort', "serialserver.conf")
+  || LogErrorAndDie("Can't tie using Configuration_File_Name: $!\n");
+
+LogErrorAndDie("Could not open Serial Interface!\n") if (not defined($PortObj));
+SerialSettings($PortObj);
+
+SysLog("Serial interface opened: $PortObj\n");
+
+#Creating select() selector for improved reading:
+$sel = IO::Select->new(\*SER);
 
 SysLog("Server started. Waiting 5 minutes for contact from client ...\n");
 
@@ -934,12 +946,13 @@ while (@ready = $sel->can_read(15) && -f "./server.pl-active") {
   my $data = "";
 
   $data = Receive();
-  SysLog "Analysing ...\n";
   analyze($data);
 
   $count++;
 
-  SysLog("$count requests processed. Waiting on next request ...\n");
+  SysLog(sprintf(
+    "%d requests processed. Waiting on next request ...\n", $count))
+    if ($debug >= 1);
 
 }
 
