@@ -519,8 +519,6 @@ sub SignOpenPGP {
     print OUT $request;
     close OUT;
 
-    #!!!!   ?!?
-    #my $homedir=-w "/root/.gnupg" ? "/root/.gnupg":"$wid/";
     my $homedir = "$wid/";
 
     {
@@ -528,14 +526,12 @@ sub SignOpenPGP {
       my ($stdin, $stdout, $stderr) =
         (IO::Handle->new(), IO::Handle->new(), IO::Handle->new());
 
-      SysLog(
-        "Importiere $gpgbin --no-tty --homedir $homedir --import $wid/request.key\n"
-      );
+      my $command = sprintf(
+        "%s --no-tty --homedir %s --command-fd 0 --status-fd 1 --logger-fd 2 --with-colons --import %s/request.key",
+        $gpgbin, $homedir, $wid);
+      SysLog(sprintf("%s\n", $command)) if ($debug >= 1);
 
-      my $pid = open3($stdin, $stdout, $stderr,
-        "$gpgbin --no-tty --homedir $homedir --command-fd 0 --status-fd 1 --logger-fd 2 --with-colons --import $wid/request.key"
-      );
-
+      my $pid = open3($stdin, $stdout, $stderr, $command);
       if ($pid == 0) {
         LogErrorAndDie "Cannot fork GnuPG.";
       }
