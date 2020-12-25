@@ -18,7 +18,8 @@ use Digest::SHA qw(sha1_hex);
 #Protocol version:
 my $ver = 1;
 
-my $debug = 0;
+my $debug      = 0;
+
 my $log_stdout = 1;
 
 my $paranoid = 1;
@@ -33,16 +34,17 @@ my $gpgbin = "/usr/bin/gpg";
 
 my $opensslbin = "/usr/bin/openssl";
 
-my $work = $ENV{'SIGNER_WORKDIR'} || './work';
-my $ca_conf = $ENV{'SIGNER_CA_CONFIG'} || '/etc/ssl';
-my $ca_basedir = $ENV{'SIGNER_BASEDIR'} || '.';
+my $work       = $ENV{'SIGNER_WORKDIR'}   || './work';
+my $ca_conf    = $ENV{'SIGNER_CA_CONFIG'} || '/etc/ssl';
+my $ca_basedir = $ENV{'SIGNER_BASEDIR'}   || '.';
 
 #my $gpgID='gpgtest@cacert.at';
 my $gpgID = 'gpg@cacert.org';
 
 my %rootkeys = (
-  "1" => 5,  #X.509
-  "2" => 1); #OpenPGP
+  "1" => 5,    #X.509
+  "2" => 1
+);             #OpenPGP
 my %hashes = (
   "0"  => "",
   "1"  => "-md md5",
@@ -50,7 +52,8 @@ my %hashes = (
   "3"  => "-md rmd160",
   "8"  => "-md sha256",
   "9"  => "-md sha384",
-  "10" => "-md sha512");
+  "10" => "-md sha512"
+);
 my %templates = (
   "0"  => "client.cnf",
   "1"  => "client-org.cnf",
@@ -66,8 +69,7 @@ my %templates = (
   "11" => "subca.cnf"
 );
 
-my $starttime = 5 * 60; # 5 minutes
-
+my $starttime = 5 * 60;    # 5 minutes
 
 #End of configurations
 
@@ -76,15 +78,14 @@ my $starttime = 5 * 60; # 5 minutes
 mkdir "$work", 0700;
 mkdir "$ca_basedir/currentcrls";
 
-$ENV{'PATH'} = '/usr/bin/:/bin';
-$ENV{'IFS'} = "\n";
-$ENV{'LD_PRELOAD'} = '';
+$ENV{'PATH'}            = '/usr/bin/:/bin';
+$ENV{'IFS'}             = "\n";
+$ENV{'LD_PRELOAD'}      = '';
 $ENV{'LD_LIBRARY_PATH'} = '';
-$ENV{'LANG'} = '';
+$ENV{'LANG'}            = '';
 
 #Logging functions:
-sub SysLog($)
-{
+sub SysLog($) {
   my $date = POSIX::strftime("%Y-%m-%d", localtime);
   open LOG, ">>logfile$date.txt";
   return if (not defined($_[0]));
@@ -96,17 +97,14 @@ sub SysLog($)
   close LOG;
 }
 
-sub LogErrorAndDie($)
-{
+sub LogErrorAndDie($) {
   SysLog($_[0]);
-  if ($paranoid == 1)
-  {
+  if ($paranoid == 1) {
     die $_[0];
   }
 }
 
-sub readfile($)
-{
+sub readfile($) {
   my $olds = $/;
   open READIN, "<$_[0]";
   undef $/;
@@ -116,82 +114,76 @@ sub readfile($)
   return $content;
 }
 
-
 #Hexdump function: Returns the hexdump representation of a string
-sub hexdump($)
-{
+sub hexdump($) {
   return "" if (not defined($_[0]));
   my $content = "";
-  $content .= sprintf("%02X ", unpack("C", substr($_[0], $_, 1))) foreach (0 .. length($_[0]) - 1);
+  $content .= sprintf("%02X ", unpack("C", substr($_[0], $_, 1)))
+    foreach (0 .. length($_[0]) - 1);
   return $content;
 }
 
 #pack3 packs together the length of the data in 3 bytes and the data itself, size limited to 16MB. In case the data is more than 16 MB, it is ignored, and a 0 Byte block is transferred
-sub pack3
-{
+sub pack3 {
   return "\x00\x00\x00" if (!defined($_[0]));
-  my $data = (length($_[0]) >= 2 ** 24) ? "" : $_[0];
-  my $len = pack("N", length($data));
+  my $data = (length($_[0]) >= 2**24) ? "" : $_[0];
+  my $len  = pack("N", length($data));
   return substr($len, 1, 3) . $data;
 }
 
-
 #unpack3 unpacks packed data.
-sub unpack3($)
-{
+sub unpack3($) {
   return undef if ((not defined($_[0])) or length($_[0]) < 3);
-  SysLog("hexdump: " . hexdump("\x00" . substr($_[0], 0, 3)) . "\n") if ($debug >= 1);
+  SysLog("hexdump: " . hexdump("\x00" . substr($_[0], 0, 3)) . "\n")
+    if ($debug >= 1);
   my $len = unpack("N", "\x00" . substr($_[0], 0, 3));
-  SysLog("len3: $len length(): " . length($_[0]) . " length()-3: " . (length($_[0]) - 3) . "\n") if ($debug >= 1);
+  SysLog("len3: $len length(): "
+      . length($_[0])
+      . " length()-3: "
+      . (length($_[0]) - 3) . "\n")
+    if ($debug >= 1);
   return undef if (length($_[0]) - 3 != $len);
   return substr($_[0], 3);
 }
 
-
 #unpack3array extracts a whole array of concatented packed data.
-sub unpack3array($)
-{
+sub unpack3array($) {
   my @retarr = ();
-  if ((not defined($_[0])) or length($_[0]) < 3)
-  {
+  if ((not defined($_[0])) or length($_[0]) < 3) {
     SysLog "Datenanfang kaputt\n";
     return ();
   }
   my $dataleft = $_[0];
-  while (length($dataleft) >= 3)
-  {
-    SysLog("hexdump: " . hexdump("\x00" . substr($dataleft, 0, 3)) . "\n") if ($debug >= 1);
+  while (length($dataleft) >= 3) {
+    SysLog("hexdump: " . hexdump("\x00" . substr($dataleft, 0, 3)) . "\n")
+      if ($debug >= 1);
     my $len = unpack("N", "\x00" . substr($dataleft, 0, 3));
-    SysLog("len3: $len length(): " . length($dataleft) . " length()-3: " . (length($dataleft) - 3) . "\n") if ($debug >= 1);
-    if (length($dataleft) - 3 < $len)
-    {
+    SysLog("len3: $len length(): "
+        . length($dataleft)
+        . " length()-3: "
+        . (length($dataleft) - 3) . "\n")
+      if ($debug >= 1);
+    if (length($dataleft) - 3 < $len) {
       SysLog "Datensatz abgeschnitten\n";
       return ();
     }
     push @retarr, substr($dataleft, 3, $len);
     $dataleft = substr($dataleft, 3 + $len);
   }
-  if (length($dataleft) != 0)
-  {
+  if (length($dataleft) != 0) {
     SysLog "Ende abgeschnitten\n";
     return ();
   }
   return @retarr;
 }
 
-
-
-
 my $timestamp = POSIX::strftime("%Y-%m-%d %H:%M:%S", localtime);
 
 SysLog("Starting Server at $timestamp\n");
 
 SysLog("Opening Serial interface:\n");
-#if(1)
-#{
 
-sub SerialSettings
-{
+sub SerialSettings {
   my $PortObj = $_[0];
   LogErrorAndDie("Could not open Serial Port!\n") if (!defined($PortObj));
   $PortObj->baudrate(115200);
@@ -204,147 +196,136 @@ sub SerialSettings
 my $PortObj = Device::SerialPort->new($serialport);
 SerialSettings($PortObj);
 $PortObj->save("serialserver.conf");
-#}
 undef $PortObj;
 
-$PortObj = tie(*SER, 'Device::SerialPort', "serialserver.conf") || LogErrorAndDie("Can't tie using Configuration_File_Name: $!\n");
+$PortObj = tie(*SER, 'Device::SerialPort', "serialserver.conf")
+  || LogErrorAndDie("Can't tie using Configuration_File_Name: $!\n");
 
 LogErrorAndDie("Could not open Serial Interface!\n") if (not defined($PortObj));
 SerialSettings($PortObj);
 
 SysLog("Serial interface opened: $PortObj\n");
 
-
 #Creating select() selector for improved reading:
 my $sel = IO::Select->new(\*SER);
 
 #Raw send function over the Serial Interface  (+debugging)
-sub SendIt($)
-{
+sub SendIt($) {
   return unless defined($_[0]);
-  SysLog "Sending " . length($_[0]) . "\n"; #hexdump($_[0])."\n";
-  my $data = $_[0];
+  SysLog "Sending " . length($_[0]) . "\n";    #hexdump($_[0])."\n";
+  my $data      = $_[0];
   my $run_count = 0;
-  my $total = 0;
-  my $mtu = 30;
-  while (length($data))
-  {
+  my $total     = 0;
+  my $mtu       = 30;
+  while (length($data)) {
     my $iwrote = scalar($PortObj->write(substr($data, 0, $mtu))) || 0;
-    usleep(270 * $iwrote + 9000); # On Linux, we have to wait to make sure it is being sent, and we dont loose any data.
+
+    # On Linux, we have to wait to make sure it is being sent, and we dont loose any data.
+    usleep(270 * $iwrote + 9000);
     $total += $iwrote;
     $data = substr($data, $iwrote);
-    SysLog("i wrote: $iwrote total: $total left: " . length($data) . "\n") if (!($run_count++ % 10));
+    SysLog("i wrote: $iwrote total: $total left: " . length($data) . "\n")
+      if (!($run_count++ % 10));
   }
 }
 
-
 #Send data over the Serial Interface with handshaking:
 #Warning: This function is implemented paranoid. It exits the program in case something goes wrong.
-sub SendHandshakedParanoid($)
-{
+sub SendHandshakedParanoid($) {
   SendIt("\x02");
 
-  LogErrorAndDie "Handshake uncompleted. Connection lost!" if (!scalar($sel->can_read(2)));
+  LogErrorAndDie "Handshake uncompleted. Connection lost!"
+    if (!scalar($sel->can_read(2)));
   my $data = "";
   usleep(1000000);
   my $length = read SER, $data, 1;
-  if ($length && $data eq "\x10")
-  {
+  if ($length && $data eq "\x10") {
     SysLog("OK ...\n");
     my $xor = 0;
-    foreach (0 .. length($_[0]) - 1)
-    {
+    foreach (0 .. length($_[0]) - 1) {
       $xor ^= unpack("C", substr($_[0], $_, 1));
     }
 
     my $try_again = 1;
-    while ($try_again == 1)
-    {
+    while ($try_again == 1) {
       SendIt($_[0] . pack("C", $xor) . "rie4Ech7");
 
-      LogErrorAndDie "Packet receipt was not confirmed in 5 seconds. Connection lost!" if (!scalar($sel->can_read(5)));
+      LogErrorAndDie
+        "Packet receipt was not confirmed in 5 seconds. Connection lost!"
+        if (!scalar($sel->can_read(5)));
 
-      $data = "";
+      $data   = "";
       $length = read SER, $data, 1;
 
-      if ($length && $data eq "\x10")
-      {
+      if ($length && $data eq "\x10") {
         SysLog "Sent successfully!...\n";
         $try_again = 0;
       }
-      elsif ($length && $data eq "\x11")
-      {
+      elsif ($length && $data eq "\x11") {
         $try_again = 1;
       }
-      else
-      {
+      else {
         LogErrorAndDie "I cannot send! $length " . unpack("C", $data) . "\n";
       }
     }
 
   }
-  else
-  {
+  else {
     SysLog("!Cannot send! $length $data\n");
     LogErrorAndDie("!Stopped sending.\n");
   }
 }
 
-sub Receive
-{
-  my $data = "";
+sub Receive {
+  my $data  = "";
   my @ready = $sel->can_read(20);
 
   my $length = read SER, $data, 1, 0;
 
   #SysLog "Data: ".hexdump($data)."\n";
 
-  if ($data eq "\x02")
-  {
+  if ($data eq "\x02") {
     my $modus = 1;
     SysLog "Start received, sending OK\n";
     SendIt("\x10");
 
-    my $block = "";
+    my $block         = "";
     my $blockfinished = 0;
-    my $tries = 10000;
+    my $tries         = 10000;
 
-    while ($blockfinished != 1)
-    {
+    while ($blockfinished != 1) {
       LogErrorAndDie("Tried reading too often\n") if (($tries--) <= 0);
 
       $data = "";
-      if (!scalar($sel->can_read(2)))
-      {
+      if (!scalar($sel->can_read(2))) {
         SysLog("Timeout!\n");
         return;
       }
       $length = read SER, $data, 100, 0;
-      if ($length > 0)
-      {
+      if ($length > 0) {
         $block .= $data;
       }
+
       #SysLog("Received: $length ".length($block)."\n");
       $blockfinished = defined(unpack3(substr($block, 0, -9))) ? 1 : 0;
 
-      if (!$blockfinished and substr($block, -8, 8) eq "rie4Ech7")
-      {
+      if (!$blockfinished and substr($block, -8, 8) eq "rie4Ech7") {
         SysLog "BROKEN Block detected!";
         SendIt("\x11");
-        $block = "";
+        $block         = "";
         $blockfinished = 0;
-        $tries = 10000;
+        $tries         = 10000;
       }
 
     }
-    SysLog "Block done: \n"; #.hexdump($block)."\n";
+    SysLog "Block done: \n";    #.hexdump($block)."\n";
     SendIt("\x10");
     SysLog "Returning block\n";
     return ($block);
   }
-  else
-  {
-    LogErrorAndDie("Error: No Answer received, Timeout.\n") if (length($data) == 0);
+  else {
+    LogErrorAndDie("Error: No Answer received, Timeout.\n")
+      if (length($data) == 0);
     LogErrorAndDie("Error: Wrong Startbyte: " . hexdump($data) . " !\n");
   }
 
@@ -352,100 +333,87 @@ sub Receive
 
 }
 
-
 #Checks the CRC of a received block for validity
 #Returns 1 upon successful check and 0 for a failure
-sub CheckCRC($)
-{
+sub CheckCRC($) {
   my $block = $_[0];
   return 0 if (length($_[0]) < 1);
   return 1 if ($_[0] eq "\x00");
   my $xor = 0;
-  foreach (0 .. length($block) - 2)
-  {
+  foreach (0 .. length($block) - 2) {
     $xor ^= unpack("C", substr($block, $_, 1));
   }
-  if ($xor eq unpack("C", substr($block, -1, 1)))
-  {
+  if ($xor eq unpack("C", substr($block, -1, 1))) {
     return 1;
   }
-  else
-  {
+  else {
     return 0;
   }
 
 }
 
 #Formatting and sending a Response packet
-sub Response($$$$$$$)
-{
-  SendHandshakedParanoid(pack3(pack3(pack("C*", $_[0], $_[1], $_[2], $_[3])) . pack3($_[4]) . pack3($_[5]) . pack3($_[6])));
+sub Response($$$$$$$) {
+  SendHandshakedParanoid(pack3(
+        pack3(pack("C*", $_[0], $_[1], $_[2], $_[3]))
+      . pack3($_[4])
+      . pack3($_[5])
+      . pack3($_[6])
+  ));
 }
-
 
 #Checks the parameters, whether the certificate system (OpenPGP, X.509, ...) is available,
 #whether the specified root key is available, whether the config file is available, ...
 #Returns 1 upon success, and dies upon error!
-sub CheckSystem($$$$)
-{
+sub CheckSystem($$$$) {
   my ($system, $root, $template, $hash) = @_;
-  if (not defined($templates{$template}))
-  {
+  if (not defined($templates{$template})) {
     LogErrorAndDie "Template unknown!\n";
   }
-  if (not defined($hashes{$hash}))
-  {
+  if (not defined($hashes{$hash})) {
     LogErrorAndDie "Hash algorithm unknown!\n";
   }
-  if (defined($rootkeys{$system}))
-  {
-    if ($root < $rootkeys{$system})
-    {
+  if (defined($rootkeys{$system})) {
+    if ($root < $rootkeys{$system}) {
       return 1;
     }
-    else
-    {
-      LogErrorAndDie "Identity System $system has only $rootkeys{$system} root keys, key $root does not exist.\n";
+    else {
+      LogErrorAndDie
+        "Identity System $system has only $rootkeys{$system} root keys, key $root does not exist.\n";
     }
   }
-  else
-  {
+  else {
     LogErrorAndDie "Identity System $system not supported";
   }
 
   return 0;
 }
 
-
 #Selects the specified config file for OpenSSL and makes sure that the specified config file exists
 #Returns the full path to the config file
-sub X509ConfigFile($$)
-{
+sub X509ConfigFile($$) {
   my ($root, $template) = @_;
   my $opensslcnf = "";
-  if ($root == 0)
-  {
+  if ($root == 0) {
     $opensslcnf = "$ca_conf/openssl-$templates{$template}";
   }
-  elsif ($root == 1)
-  {
+  elsif ($root == 1) {
     $opensslcnf = "$ca_conf/class3-$templates{$template}";
   }
-  elsif ($root == 2)
-  {
+  elsif ($root == 2) {
     $opensslcnf = "$ca_conf/class3s-$templates{$template}";
   }
-  else
-  {
+  else {
     $opensslcnf = "$ca_conf/root$root/$templates{$template}";
   }
+
   # Check that the config file exists
-  LogErrorAndDie "Config file does not exist: $opensslcnf!" unless (-f $opensslcnf);
+  LogErrorAndDie "Config file does not exist: $opensslcnf!"
+    unless (-f $opensslcnf);
   return $opensslcnf;
 }
 
-sub CreateWorkspace()
-{
+sub CreateWorkspace() {
   mkdir "$work", 0700;
   my $id = (File::CounterFile->new("$work/.counter", "0"))->inc;
   mkdir "$work/" . int($id / 1000), 0700;
@@ -455,9 +423,7 @@ sub CreateWorkspace()
   return $wid;
 }
 
-
-sub SignX509($$$$$$$$)
-{
+sub SignX509($$$$$$$$) {
   my ($root, $template, $hash, $days, $spkac, $request, $san, $subject) = @_;
 
   my $wid = CreateWorkspace();
@@ -468,38 +434,40 @@ sub SignX509($$$$$$$$)
   SysLog("SAN: $san\n");
 
   $subject =~ s/\\x([A-F0-9]{2})/pack("C", hex($1))/egi;
-  $san =~ s/\\x([A-F0-9]{2})/pack("C", hex($1))/egi;
+  $san     =~ s/\\x([A-F0-9]{2})/pack("C", hex($1))/egi;
 
-  LogErrorAndDie "Invalid characters in SubjectAltName!\n" if ($san =~ m/[ \n\r\t\x00#"'\\]/);
-  LogErrorAndDie "Invalid characters in Subject: " . hexdump($subject) . " - $subject\n" if ($subject =~ m/[\n\r\t\x00#"'\\]/);
+  LogErrorAndDie "Invalid characters in SubjectAltName!\n"
+    if ($san =~ m/[ \n\r\t\x00#"'\\]/);
+  LogErrorAndDie "Invalid characters in Subject: "
+    . hexdump($subject)
+    . " - $subject\n"
+    if ($subject =~ m/[\n\r\t\x00#"'\\]/);
 
   SysLog("Subject: $subject\n");
   SysLog("SAN: $san\n");
 
   my $extfile = "";
-  if ($templates{$template} =~ m/server/) #??? Should we really do that for all and only for server certs?
+  if ($templates{$template} =~
+    m/server/)  #??? Should we really do that for all and only for server certs?
   {
     open OUT, ">$wid/extfile";
     print OUT "basicConstraints = critical, CA:FALSE\n";
-    print OUT "keyUsage = critical, digitalSignature, keyEncipherment, keyAgreement\n";
+    print OUT
+      "keyUsage = critical, digitalSignature, keyEncipherment, keyAgreement\n";
     print OUT "extendedKeyUsage = clientAuth, serverAuth, nsSGC, msSGC\n";
     print OUT "authorityInfoAccess = OCSP;URI:$OCSPUrl\n";
 
     my $CRLUrl = "";
-    if ($root == 0)
-    {
+    if ($root == 0) {
       $CRLUrl = "http://crl.cacert.org/revoke.crl";
     }
-    elsif ($root == 1)
-    {
+    elsif ($root == 1) {
       $CRLUrl = "http://crl.cacert.org/class3-revoke.crl";
     }
-    elsif ($root == 2)
-    {
+    elsif ($root == 2) {
       $CRLUrl = "http://crl.cacert.org/class3s-revoke.crl";
     }
-    else
-    {
+    else {
       $CRLUrl = "http://crl.cacert.org/root${root}.crl";
     }
     print OUT "crlDistributionPoints = URI:${CRLUrl}\n";
@@ -510,20 +478,16 @@ sub SignX509($$$$$$$$)
 
   my $cmd = ($request =~ m/SPKAC\s*=/) ? "-spkac" : "-subj '$subject' -in";
 
-  #my $cmd=$spkac?"-spkac":"-subj '$subject' -in";
-
-
-  if (open OUT, ">$wid/request.csr")
-  {
+  if (open OUT, ">$wid/request.csr") {
     print OUT $request;
     close OUT;
 
-    my $do = `$opensslbin ca $hashes{$hash} -config $openssl_config $cmd $wid/request.csr -out $wid/output.crt -days $days -key test -batch $extfile 2>&1`;
+    my $do =
+      `$opensslbin ca $hashes{$hash} -config $openssl_config $cmd $wid/request.csr -out $wid/output.crt -days $days -key test -batch $extfile 2>&1`;
 
     SysLog $do;
 
-    if (open IN, "<$wid/output.crt")
-    {
+    if (open IN, "<$wid/output.crt") {
       undef $/;
       my $content = <IN>;
       close IN;
@@ -533,33 +497,28 @@ sub SignX509($$$$$$$$)
       SysLog "Antworte...\n";
       Response($ver, 1, 0, 0, $content, "", "");
       SysLog "Done.\n";
-      if ($debug != 0)
-      {
+      if ($debug != 0) {
         unlink "$wid/output.crt";
         unlink "$wid/request.csr";
         unlink "$wid/extfile";
       }
     }
-    else
-    {
+    else {
       LogErrorAndDie("Could not read the resulting certificate.\n");
     }
   }
-  else
-  {
+  else {
     LogErrorAndDie("Could not save request.\n");
   }
   unlink "$wid";
 }
 
-sub SignOpenPGP
-{
+sub SignOpenPGP {
   my ($root, $template, $hash, $days, $spkac, $request, $san, $subject) = @_;
 
   my $wid = CreateWorkspace();
 
-  if (!-f "secring$root.gpg")
-  {
+  if (!-f "secring$root.gpg") {
     LogErrorAndDie "Root Key not found: secring$root.gpg !\n";
   }
 
@@ -568,14 +527,14 @@ sub SignOpenPGP
 
   my $keyid = undef;
 
-  LogErrorAndDie "Invalid characters in SubjectAltName!\n" if ($san =~ m/[ \n\r\t\x00#"'\\]/);
-  LogErrorAndDie "Invalid characters in Subject!\n" if ($subject =~ m/[ \n\r\t\x00#"'\\;]/);
+  LogErrorAndDie "Invalid characters in SubjectAltName!\n"
+    if ($san =~ m/[ \n\r\t\x00#"'\\]/);
+  LogErrorAndDie "Invalid characters in Subject!\n"
+    if ($subject =~ m/[ \n\r\t\x00#"'\\;]/);
 
-  if (open OUT, ">$wid/request.key")
-  {
+  if (open OUT, ">$wid/request.key") {
     print OUT $request;
     close OUT;
-
 
     #!!!!   ?!?
     #my $homedir=-w "/root/.gnupg" ? "/root/.gnupg":"$wid/";
@@ -583,68 +542,59 @@ sub SignOpenPGP
 
     {
       SysLog "Running GnuPG in $homedir...\n";
-      my ($stdin, $stdout, $stderr) = (IO::Handle->new(), IO::Handle->new(), IO::Handle->new());
+      my ($stdin, $stdout, $stderr) =
+        (IO::Handle->new(), IO::Handle->new(), IO::Handle->new());
 
-      SysLog "Importiere $gpgbin --no-tty --homedir $homedir --import $wid/request.key\n";
+      SysLog
+        "Importiere $gpgbin --no-tty --homedir $homedir --import $wid/request.key\n";
 
-      my $pid = open3($stdin, $stdout, $stderr, "$gpgbin --no-tty --homedir $homedir --command-fd 0 --status-fd 1 --logger-fd 2 --with-colons --import $wid/request.key");
+      my $pid = open3($stdin, $stdout, $stderr,
+        "$gpgbin --no-tty --homedir $homedir --command-fd 0 --status-fd 1 --logger-fd 2 --with-colons --import $wid/request.key"
+      );
 
-      if ($pid == 0)
-      {
+      if ($pid == 0) {
         LogErrorAndDie "Cannot fork GnuPG.";
       }
       $/ = "\n";
-      while (<$stdout>)
-      {
+      while (<$stdout>) {
         SysLog "Received from GnuPG: $_\n";
-        if (m/^\[GNUPG:\] GOT_IT/)
-        {
+        if (m/^\[GNUPG:\] GOT_IT/) {
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL keyedit\.setpref\.okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL keyedit\.setpref\.okay/) {
           print $stdin "no\n";
         }
-        elsif (m/^\[GNUPG:\] ALREADY_SIGNED/)
-        {
+        elsif (m/^\[GNUPG:\] ALREADY_SIGNED/) {
         }
-        elsif (m/^\[GNUPG:\] GOOD_PASSPHRASE/)
-        {
+        elsif (m/^\[GNUPG:\] GOOD_PASSPHRASE/) {
         }
-        elsif (m/^\[GNUPG:\] KEYEXPIRED/)
-        {
+        elsif (m/^\[GNUPG:\] KEYEXPIRED/) {
         }
-        elsif (m/^\[GNUPG:\] SIGEXPIRED/)
-        {
+        elsif (m/^\[GNUPG:\] SIGEXPIRED/) {
         }
-        elsif (m/^\[GNUPG:\] IMPORT_OK/)
-        {
+        elsif (m/^\[GNUPG:\] IMPORT_OK/) {
         }
-        elsif (m/^\[GNUPG:\] IMPORT_RES/)
-        {
+        elsif (m/^\[GNUPG:\] IMPORT_RES/) {
         }
-        elsif (m/^\[GNUPG:\] IMPORTED ([0-9A-F]{16})/)
-        {
-          LogErrorAndDie "More than one OpenPGP sent at once!" if (defined($keyid));
+        elsif (m/^\[GNUPG:\] IMPORTED ([0-9A-F]{16})/) {
+          LogErrorAndDie "More than one OpenPGP sent at once!"
+            if (defined($keyid));
           $keyid = $1;
         }
-        elsif (m/^\[GNUPG:\] NODATA/)
-        {
+        elsif (m/^\[GNUPG:\] NODATA/) {
+
           # To crash or not to crash, thats the question.
         }
-        else
-        {
+        else {
           LogErrorAndDie "ERROR: UNKNOWN $_\n";
         }
 
       }
 
-      while (<$stderr>)
-      {
-
+      while (<$stderr>) {
         SysLog "Received from GnuPG on stderr: $_\n";
 
-        if (m/^key ([0-9A-F]{8}): public key/)
-        {
+        if (m/^key ([0-9A-F]{8}): public key/) {
+
           #$keyid=$1;
         }
       }
@@ -658,109 +608,90 @@ sub SignOpenPGP
     SysLog "Running GnuPG to Sign...\n";
 
     {
-      my ($stdin, $stdout, $stderr) = (IO::Handle->new(), IO::Handle->new(), IO::Handle->new());
+      my ($stdin, $stdout, $stderr) =
+        (IO::Handle->new(), IO::Handle->new(), IO::Handle->new());
 
       $ENV{'LANG'} = "";
 
-      my $line = "$gpgbin --no-tty --default-key $gpgID --homedir $homedir --default-cert-expire $days" . "d --ask-cert-expire --cert-policy-url $CPSUrl --command-fd 0 --status-fd 1 --logger-fd 2 --sign-key $keyid ";
+      my $line =
+        "$gpgbin --no-tty --default-key $gpgID --homedir $homedir --default-cert-expire $days"
+        . "d --ask-cert-expire --cert-policy-url $CPSUrl --command-fd 0 --status-fd 1 --logger-fd 2 --sign-key $keyid ";
       SysLog($line . "\n");
 
       my $pid = open3($stdin, $stdout, $stderr, $line);
 
-      if ($pid == 0)
-      {
+      if ($pid == 0) {
         LogErrorAndDie "Cannot fork GnuPG.";
       }
       SysLog "Got PID $pid\n";
-      while (<$stdout>)
-      {
+      while (<$stdout>) {
         SysLog "Received from GnuPG: $_\n";
-        if (m/^\[GNUPG:\] GET_BOOL keyedit\.sign_all\.okay/)
-        {
+        if (m/^\[GNUPG:\] GET_BOOL keyedit\.sign_all\.okay/) {
           print $stdin "yes\n";
         }
-        elsif (m/^\[GNUPG:\] GOT_IT/)
-        {
+        elsif (m/^\[GNUPG:\] GOT_IT/) {
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.okay/) {
           print $stdin "yes\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.expire_okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.expire_okay/) {
           print $stdin "yes\n";
         }
-        elsif (m/^\[GNUPG:\] GET_LINE siggen\.valid\s?$/)
-        {
+        elsif (m/^\[GNUPG:\] GET_LINE siggen\.valid\s?$/) {
           print $stdin "$days\n";
         }
-        elsif (m/^\[GNUPG:\] GET_LINE sign_uid\.expire\s?$/)
-        {
-          print "DETECTED: Do you want your signature to expire at the same time? (Y/n) -> yes\n";
+        elsif (m/^\[GNUPG:\] GET_LINE sign_uid\.expire\s?$/) {
+          print
+            "DETECTED: Do you want your signature to expire at the same time? (Y/n) -> yes\n";
           print $stdin "no\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.replace_expired_okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.replace_expired_okay/) {
           print $stdin "yes\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.dupe_okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.dupe_okay/) {
           print $stdin "yes\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL keyedit\.sign_revoked\.okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL keyedit\.sign_revoked\.okay/) {
           print $stdin "no\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.revoke_okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.revoke_okay/) {
           print $stdin "no\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.expired_okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.expired_okay/) {
           print "The key has already expired!!!\n";
           print $stdin "no\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.nosig_okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.nosig_okay/) {
           print $stdin "no\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.v4_on_v3_okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.v4_on_v3_okay/) {
           print $stdin "no\n";
         }
-        elsif (m/^\[GNUPG:\] GET_BOOL keyedit\.setpref\.okay/)
-        {
+        elsif (m/^\[GNUPG:\] GET_BOOL keyedit\.setpref\.okay/) {
           print $stdin "no\n";
         }
-        elsif (m/^\[GNUPG:\] ALREADY_SIGNED/)
-        {
+        elsif (m/^\[GNUPG:\] ALREADY_SIGNED/) {
         }
-        elsif (m/^\[GNUPG:\] GOOD_PASSPHRASE/)
-        {
+        elsif (m/^\[GNUPG:\] GOOD_PASSPHRASE/) {
         }
-        elsif (m/^\[GNUPG:\] KEYEXPIRED/)
-        {
+        elsif (m/^\[GNUPG:\] KEYEXPIRED/) {
         }
-        elsif (m/^\[GNUPG:\] SIGEXPIRED/)
-        {
+        elsif (m/^\[GNUPG:\] SIGEXPIRED/) {
         }
-        elsif (m/^\[GNUPG:\] NODATA/)
-        {
+        elsif (m/^\[GNUPG:\] NODATA/) {
+
           # To crash or not to crash, thats the question.
         }
-        else
-        {
+        else {
           LogErrorAndDie "ERROR: UNKNOWN $_\n";
         }
       }
 
-      while (<$stderr>)
-      {
-
+      while (<$stderr>) {
         SysLog "Received from GnuPG on stderr: $_\n";
 
-        if (m/^key ([0-9A-F]{8}): public key/)
-        {
+        if (m/^key ([0-9A-F]{8}): public key/) {
+
           #$keyid=$1;
         }
       }
@@ -773,13 +704,14 @@ sub SignOpenPGP
 
     SysLog "Running GPG to export...\n";
 
-    my $do = `$gpgbin --no-tty --homedir $homedir --export --armor $keyid > $wid/result.key`;
+    my $do =
+      `$gpgbin --no-tty --homedir $homedir --export --armor $keyid > $wid/result.key`;
     SysLog $do;
-    $do = `$gpgbin --no-tty --homedir $homedir --batch --yes --delete-key $keyid 2>&1`;
+    $do =
+      `$gpgbin --no-tty --homedir $homedir --batch --yes --delete-key $keyid 2>&1`;
     SysLog $do;
 
-    if (open IN, "<$wid/result.key")
-    {
+    if (open IN, "<$wid/result.key") {
       undef $/;
       my $content = <IN>;
       close IN;
@@ -790,20 +722,17 @@ sub SignOpenPGP
       Response($ver, 2, 0, 0, $content, "", "");
       SysLog "Done.\n";
 
-      if ($debug != 0)
-      {
+      if ($debug != 0) {
         unlink "$wid/request.key";
         unlink "$wid/result.key";
       }
 
     }
-    else
-    {
+    else {
       SysLog "NO Resulting Key found!";
     }
   }
-  else
-  {
+  else {
     LogErrorAndDie "Kann Request nicht speichern!\n";
   }
 
@@ -812,12 +741,13 @@ sub SignOpenPGP
   unlink("$wid");
 }
 
-sub RevokeX509
-{
+sub RevokeX509 {
   my ($root, $template, $hash, $days, $spkac, $request, $san, $subject) = @_;
 
-  LogErrorAndDie("Invalid characters in SubjectAltName!\n") if ($san =~ m/[ \n\r\t\x00#"'\\]/);
-  LogErrorAndDie("Invalid characters in Hash!\n") if (!$subject =~ m/^[0-9a-fA-F]+$/);
+  LogErrorAndDie("Invalid characters in SubjectAltName!\n")
+    if ($san =~ m/[ \n\r\t\x00#"'\\]/);
+  LogErrorAndDie("Invalid characters in Hash!\n")
+    if (!$subject =~ m/^[0-9a-fA-F]+$/);
 
   SysLog("Revoke X.509 for $root\n");
   SysLog("Current hash from client: $subject\n");
@@ -825,54 +755,46 @@ sub RevokeX509
   my $is_current = 0;
   my $current_hash;
 
-  if (-f "revoke-root$root.crl")
-  {
+  if (-f "revoke-root$root.crl") {
     $current_hash = sha1_hex(readfile("revoke-root$root.crl"));
   }
-  else
-  {
+  else {
     $current_hash = sha1_hex("");
   }
 
   SysLog("Current hash on signer $current_hash\n");
 
-  if ($subject eq $current_hash)
-  {
+  if ($subject eq $current_hash) {
     SysLog("Hash matches current CRL.\n");
     SysLog("Deleting old CRLs...\n");
-    foreach (<$ca_basedir/currentcrls/$root/*>)
-    {
-      if ($_ ne "$ca_basedir/currentcrls/$root/$subject.crl")
-      {
+    foreach (<$ca_basedir/currentcrls/$root/*>) {
+      if ($_ ne "$ca_basedir/currentcrls/$root/$subject.crl") {
         SysLog("Deleting $_\n");
         unlink $_;
       }
     }
     SysLog("Done with deleting old CRLs.\n");
-    if ($subject eq sha1_hex(""))
-    {
+    if ($subject eq sha1_hex("")) {
       SysLog("Client has empty CRL\n");
     }
-    else
-    {
+    else {
       $is_current = 1;
     }
   }
 
-  my $wid = CreateWorkspace();
+  my $wid            = CreateWorkspace();
   my $openssl_config = X509ConfigFile($root, $template);
 
-  if (length $request > 0)
-  {
-    if (open OUT, ">$wid/request.crt")
-    {
+  if (length $request > 0) {
+    if (open OUT, ">$wid/request.crt") {
       print OUT $request;
       close OUT;
 
       my $do;
       my $command;
 
-      $command = "$opensslbin ca $hashes{$hash} -config $openssl_config -key test -batch -revoke $wid/request.crt 2>&1";
+      $command =
+        "$opensslbin ca $hashes{$hash} -config $openssl_config -key test -batch -revoke $wid/request.crt 2>&1";
       $do = `$command`;
       SysLog("output from $command:\n$do") if ($? != 0 || $debug >= 1);
     }
@@ -880,10 +802,12 @@ sub RevokeX509
 
   my $do;
   my $command;
-  $command = "$opensslbin ca $hashes{$hash} -config $openssl_config -key test -batch -gencrl -crldays 7 -crlexts crl_ext -out $wid/cacert-revoke.crl 2>&1";
+  $command =
+    "$opensslbin ca $hashes{$hash} -config $openssl_config -key test -batch -gencrl -crldays 7 -crlexts crl_ext -out $wid/cacert-revoke.crl 2>&1";
   $do = `$command`;
   SysLog("output from $command:\n$do") if ($? != 0 || $debug >= 1);
-  $command = "$opensslbin crl -inform PEM -in $wid/cacert-revoke.crl -outform DER -out $wid/revoke.crl 2>&1";
+  $command =
+    "$opensslbin crl -inform PEM -in $wid/cacert-revoke.crl -outform DER -out $wid/revoke.crl 2>&1";
   $do = `$command`;
   SysLog("output from $command:\n$do") if ($? != 0 || $debug >= 1);
 
@@ -891,8 +815,7 @@ sub RevokeX509
 
   SysLog("wrote $wid/revoke.crl\n") if ($debug >= 1);
 
-  if (open IN, "<$wid/revoke.crl")
-  {
+  if (open IN, "<$wid/revoke.crl") {
     undef $/;
     my $content = <IN>;
     close IN;
@@ -900,32 +823,31 @@ sub RevokeX509
     unlink "$wid/revoke.crl";
 
     mkdir "$ca_basedir/currentcrls/$root";
-    my $new_crl_name = sprintf("$ca_basedir/currentcrls/$root/%s.crl", sha1_hex($content));
+    my $new_crl_name =
+      sprintf("$ca_basedir/currentcrls/$root/%s.crl", sha1_hex($content));
     open OUT, ">$new_crl_name";
     print OUT $content;
     close OUT;
 
-    if ($is_current == 1)
-    {
+    if ($is_current == 1) {
       SysLog("Schicke aktuelles Delta...\n");
-      my $command = "xdelta delta revoke-root$root.crl $new_crl_name delta$root.diff";
+      my $command =
+        "xdelta delta revoke-root$root.crl $new_crl_name delta$root.diff";
       SysLog("$command\n");
       system $command;
       Response($ver, 2, 0, 0, readfile("delta$root.diff"), "", "");
     }
-    else
-    {
-      if (-f "$ca_basedir/currentcrls/$root/$subject.crl")
-      {
+    else {
+      if (-f "$ca_basedir/currentcrls/$root/$subject.crl") {
         SysLog("Schicke altes Delta...\n");
-        my $command = "xdelta delta $ca_basedir/currentcrls/$root/$subject.crl $new_crl_name delta$root.diff";
+        my $command =
+          "xdelta delta $ca_basedir/currentcrls/$root/$subject.crl $new_crl_name delta$root.diff";
         SysLog("$command\n");
         system $command;
 
         Response($ver, 2, 0, 0, readfile("delta$root.diff"), "", "");
       }
-      else
-      {
+      else {
         SysLog("Out of Sync! Sending full CRL...\n");
         Response($ver, 2, 0, 0, readfile($new_crl_name), "", "");
       }
@@ -937,35 +859,35 @@ sub RevokeX509
 
     SysLog("Done.\n");
   }
-  else
-  {
+  else {
     unlink "$wid";
   }
 }
 
-
-sub analyze($)
-{
+sub analyze($) {
   SysLog("Analysiere ...\n");
   SysLog(hexdump($_[0]) . "\n") if ($debug >= 1);
 
   my @fields = unpack3array(substr($_[0], 3, -9));
-  LogErrorAndDie("Wrong number of parameters: " . scalar(@fields) . "\n") if (scalar(@fields) != 4);
+  LogErrorAndDie("Wrong number of parameters: " . scalar(@fields) . "\n")
+    if (scalar(@fields) != 4);
 
   SysLog("Header: " . hexdump($fields[0]) . "\n") if ($debug >= 1);
   my @bytes = unpack("C*", $fields[0]);
 
   LogErrorAndDie("Header too short!\n") if (length($fields[0]) < 3);
 
-  LogErrorAndDie("Version mismatch. Server does not support version $bytes[0], server only supports version $ver!\n") if ($bytes[0] != $ver);
+  LogErrorAndDie(
+    "Version mismatch. Server does not support version $bytes[0], server only supports version $ver!\n"
+  ) if ($bytes[0] != $ver);
 
-  LogErrorAndDie("Header has wrong length: " . length($fields[0]) . "!\n") if (length($fields[0]) != 9);
+  LogErrorAndDie("Header has wrong length: " . length($fields[0]) . "!\n")
+    if (length($fields[0]) != 9);
 
-  if ($bytes[1] == 0) # NUL Request
+  if ($bytes[1] == 0)    # NUL Request
   {
     SysLog("NUL Request detected.\n");
-    if ($fields[1] =~ /^\d+\.\d+$/)
-    {
+    if ($fields[1] =~ /^\d+\.\d+$/) {
       open OUT, ">timesync.sh";
       print OUT "date -u '$fields[1]'\n";
       print OUT "hwclock --systohc\n";
@@ -973,30 +895,29 @@ sub analyze($)
     }
     Response($ver, 0, 0, 0, "", "", "");
   }
-  elsif ($bytes[1] == 1) # Sign Request
+  elsif ($bytes[1] == 1)    # Sign Request
   {
     SysLog("SignRequest detected...\n");
     CheckSystem($bytes[2], $bytes[3], $bytes[4], $bytes[5]);
-    if ($bytes[2] == 1)
-    {
-      SignX509($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7], $bytes[8], $fields[1], $fields[2], $fields[3]);
+    if ($bytes[2] == 1) {
+      SignX509($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7],
+        $bytes[8], $fields[1], $fields[2], $fields[3]);
     }
-    elsif ($bytes[2] == 2)
-    {
-      SignOpenPGP($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7], $bytes[8], $fields[1], $fields[2], $fields[3]);
+    elsif ($bytes[2] == 2) {
+      SignOpenPGP($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7],
+        $bytes[8], $fields[1], $fields[2], $fields[3]);
     }
   }
-  elsif ($bytes[1] == 2) # Revocation Request
+  elsif ($bytes[1] == 2)    # Revocation Request
   {
     SysLog("Revocation Request ...\n");
     CheckSystem($bytes[2], $bytes[3], $bytes[4], $bytes[5]);
-    if ($bytes[2] == 1)
-    {
-      RevokeX509($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7], $bytes[8], $fields[1], $fields[2], $fields[3]);
+    if ($bytes[2] == 1) {
+      RevokeX509($bytes[3], $bytes[4], $bytes[5], ($bytes[6] << 8) + $bytes[7],
+        $bytes[8], $fields[1], $fields[2], $fields[3]);
     }
   }
-  else
-  {
+  else {
     LogErrorAndDie("Unknown command\n");
   }
 }
@@ -1009,8 +930,7 @@ my @ready = $sel->can_read($starttime);
 my $count = 0;
 
 #As soon as the client connected successfully, the client has to send a request faster than every 10 seconds
-while (@ready = $sel->can_read(15) && -f "./server.pl-active")
-{
+while (@ready = $sel->can_read(15) && -f "./server.pl-active") {
   my $data = "";
 
   $data = Receive();
