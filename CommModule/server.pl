@@ -937,6 +937,13 @@ SysLog("Serial interface opened: $PortObj\n");
 #Creating select() selector for improved reading:
 $sel = IO::Select->new(\*SER);
 
+$SIG{INT} = \&signal_handler;
+$SIG{TERM} = \&signal_handler;
+
+sub signal_handler {
+  LogErrorAndDie("Caught signal $!");
+}
+
 SysLog("Server started. Waiting 5 minutes for contact from client ...\n");
 
 #When started, we wait for 5 minutes for the client to connect:

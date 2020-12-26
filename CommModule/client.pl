@@ -281,24 +281,22 @@ sub unpack3array($) {
 # Raw send function over the Serial Interface  (+debugging)
 sub SendIt($) {
   return unless defined($_[0]);
-  SysLog("Sending " . length($_[0]) . "\n");
-  my $data     = $_[0];
-  my $runcount = 0;
-  my $total    = 0;
-  my $mtu      = 30;
+  SysLog(sprintf("Sending %d bytes\n", length($_[0]))) if ($debug >= 1);
+  my $data  = $_[0];
+  my $total = 0;
+  my $mtu   = 30;
   while (length($data)) {
     my $iwrote = scalar($PortObj->write(substr($data, 0, $mtu))) || 0;
     $total += $iwrote;
     $data = substr($data, $iwrote);
-    if ($debug >= 1) {
-      SysLog("i wrote: $iwrote total: $total left: " . length($data) . "\n")
-        if (!($runcount++ % 10));
-    }
+    SysLog(sprintf(
+      "Wrote: %d bytes total: %d bytes left: %d bytes\n",
+      $iwrote, $total, length($data)
+    ))
+      if ($debug >= 1);
   }
   SysLog("Sent message.\n") if ($debug >= 1);
 }
-
-my $modus = 0;
 
 #Send data over the Serial Interface with handshaking:
 sub SendHandshaked($) {
@@ -311,15 +309,11 @@ sub SendHandshaked($) {
   my $length = read SER, $data, 1;
   if ($length && $data eq "\x10") {
 
-    #print "OK ...\n";
     my $xor = 0;
     foreach (0 .. length($_[0]) - 1) {
 
-      #print "xor mit ".unpack("C",substr($_[0],$_,1))."\n";
       $xor ^= unpack("C", substr($_[0], $_, 1));
     }
-
-    #print "XOR: $xor\n";
 
     my $try_again = 1;
     while ($try_again == 1) {
@@ -333,7 +327,7 @@ sub SendHandshaked($) {
       $length = read SER, $data, 1;
 
       if ($length && $data eq "\x10") {
-        SysLog("Sent successfully!...\n");
+        SysLog("Sent successfully!...\n") if ($debug >= 1);
         $try_again = 0;
       }
       elsif ($length && $data eq "\x11") {
@@ -347,8 +341,7 @@ sub SendHandshaked($) {
 
   }
   else {
-    SysLog("!Cannot send! $length \n");
-    LogErrorAndDie("!Stopped sending.\n");
+    LogErrorAndDie("!Cannot send! $length\n");
   }
 }
 
@@ -361,7 +354,6 @@ sub Receive {
   SysLog("Data: " . hexdump($data) . "\n") if ($debug >= 1);
 
   if ($data eq "\x02") {
-    $modus = 1;
     SysLog("Start received, sending OK\n") if ($debug >= 1);
     SendIt("\x10");
 
@@ -409,7 +401,8 @@ sub Receive {
 # @result(Version,Action,Errorcode,Response)=Request(Version=1,Action=1,System=1,Root=1,Configuration="...",Parameter="...",Request="...");
 sub Request($$$$$$$$$$$) {
   SysLog(
-    "Version: $_[0] Action: $_[1] System: $_[2] Root: $_[3] Config: $_[4]\n");
+    "Version: $_[0] Action: $_[1] System: $_[2] Root: $_[3] Config: $_[4]\n")
+    if ($debug >= 1);
   $_[3] = 0 if ($_[3] < 0);
   SendHandshaked(pack3(
     pack3(pack("C*",
@@ -480,7 +473,7 @@ sub X509extractExpiryDate($) {
 sub CRLuptodate($) {
   return 0 unless (-f $_[0]);
   my $data = `$openssl_binary crl -in "$_[0]" -noout -lastupdate -inform der`;
-  SysLog("CRL: $data\n");
+  SysLog("CRL: $data");
 
   #lastUpdate=Aug  8 10:26:34 2007 GMT
   # Is the timezone handled properly?
@@ -580,21 +573,23 @@ sub OpenPGPextractExpiryDate($) {
 
 # Sets the locale according to the users preferred language
 sub setUsersLanguage($) {
-  my $lang = "en_US";
-  print "Searching for the language of the user $_[0]\n";
+  my $userid = int($_[0]);
+  my $lang   = "en_US";
+
+  SysLog("Searching for the language of the user $userid\n");
   my @a = $dbh->selectrow_array(
-    "SELECT language FROM users WHERE id='" . int($_[0]) . "'");
+    sprintf("SELECT language FROM users WHERE id='%d'", $userid));
   $lang = $1 if ($a[0] =~ m/(\w+_[\w.@]+)/);
 
-  SysLog("The users preferred language: $lang\n");
+  SysLog("The user's preferred language: $lang\n");
 
   if ($lang ne "") {
     $ENV{"LANG"} = $lang;
     setlocale(LC_ALL, $lang);
   }
   else {
-    $ENV{"LANG"} = "en_AU";
-    setlocale(LC_ALL, "en_AU");
+    $ENV{"LANG"} = "en_US";
+    setlocale(LC_ALL, "en_US");
   }
 }
 
@@ -1104,8 +1099,6 @@ sub HandleGPG() {
     }
     else {
       SysLog("Could not find the issued gpg key. " . $row{"id"} . "\n");
-
-      #$dbh->do("delete from `gpg` where `id`='".$row{'id'}."'");
     }
   }
 }
@@ -1113,6 +1106,13 @@ sub HandleGPG() {
 # Main program loop
 
 my $crlcheck = 0;
+
+$SIG{INT} = \&signal_handler;
+$SIG{TERM} = \&signal_handler;
+
+sub signal_handler {
+  LogErrorAndDie("Caught signal $!");
+}
 
 while (-f "./client.pl-active") {
   SysLog("Handling GPG database ...\n");
@@ -1131,9 +1131,10 @@ while (-f "./client.pl-active") {
   $crlcheck++;
   RefreshCRLs() if (($crlcheck % 100) == 1);
 
-  SysLog("NUL Request:\n");
   my $timestamp = POSIX::strftime("%m%d%H%M%Y.%S", gmtime);
+  SysLog("Send NUL request\n");
   Request($ver, 0, 0, 0, 0, 0, 0, 0, $timestamp, "", "");
+  SysLog("NUL request sent\n");
   sleep(1);
   usleep(1700000);
 }
