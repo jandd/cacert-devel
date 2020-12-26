@@ -18,7 +18,7 @@ use Digest::SHA qw(sha1_hex);
 #Protocol version:
 my $ver = 1;
 
-# debug flag, set to 1 for increased logging, set to 2 to log bytes
+# debug flag, set to 1 for increased logging, set to 2 to additionally log hexdumps
 my $debug = 0;
 
 # enable logging to stdout
@@ -26,7 +26,7 @@ my $log_stdout = 1;
 
 my $paranoid = 1;
 
-my $serialport = $ENV{'SERIAL_PORT'};
+my $serialport = $ENV{'SERIAL_PORT'} || "/dev/ttyUSB0";
 
 my $CPSUrl = "http://www.cacert.org/cps.php";
 
@@ -36,9 +36,10 @@ my $gpgbin = "/usr/bin/gpg";
 
 my $opensslbin = "/usr/bin/openssl";
 
-my $work       = $ENV{'SIGNER_WORKDIR'}   || './work';
-my $ca_conf    = $ENV{'SIGNER_CA_CONFIG'} || '/etc/ssl';
-my $ca_basedir = $ENV{'SIGNER_BASEDIR'}   || '.';
+my $work            = $ENV{'SIGNER_WORKDIR'}         || './work';
+my $ca_conf         = $ENV{'SIGNER_CA_CONFIG'}       || '/etc/ssl';
+my $ca_basedir      = $ENV{'SIGNER_BASEDIR'}         || '.';
+my $gpg_keyring_dir = $ENV{'SIGNER_GPG_KEYRING_DIR'} || '.';
 
 #my $gpgID='gpgtest@cacert.at';
 my $gpgID = 'gpg@cacert.org';
@@ -501,12 +502,12 @@ sub SignOpenPGP {
 
   my $wid = CreateWorkspace();
 
-  if (!-f "secring$root.gpg") {
+  if (!-f "$gpg_keyring_dir/secring$root.gpg") {
     LogErrorAndDie "Root Key not found: secring$root.gpg !\n";
   }
 
-  copy("secring$root.gpg", "$wid/secring.gpg");
-  copy("pubring$root.gpg", "$wid/pubring.gpg");
+  copy("$gpg_keyring_dir/secring$root.gpg", "$wid/secring.gpg");
+  copy("$gpg_keyring_dir/pubring$root.gpg", "$wid/pubring.gpg");
 
   my $keyid = undef;
 
