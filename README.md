@@ -84,6 +84,5 @@ Variable | Description | Default value
 `SECURE_PORT` | port to use for https | none (default to 443)
 `DEFAULT_HOSTNAME`* | hostname for the default URL | none
 `SECURE_HOSTNAME`* | hostname for client certificate authentication | none
-`TVERIFY_HOSTNAME`* | hostname for tverify | none
 
 Environment variables marked with an asterisk (*) need to be defined explicitly.

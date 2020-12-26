@@ -18,8 +18,7 @@
 */
 
 $required_env_vars = ["MYSQL_WEBDB_HOSTNAME", "MYSQL_WEBDB_USER", "MYSQL_WEBDB_PASSWORD", "MYSQL_WEBDB_DATABASE",
-	"CSR_DIRECTORY", "CRT_DIRECTORY", "DEFAULT_HOSTNAME", "SECURE_HOSTNAME", "TVERIFY_HOSTNAME", "RETURN_ADDRESS",
-	"SMTP_HOST"];
+	"CSR_DIRECTORY", "CRT_DIRECTORY", "DEFAULT_HOSTNAME", "SECURE_HOSTNAME", "RETURN_ADDRESS", "SMTP_HOST"];
 
 $missing_env_vars = [];
 foreach ($required_env_vars as $var) {
@@ -45,18 +44,16 @@ $https_port = getenv("SECURE_PORT");
 $insecure_host = sprintf("%s%s", getenv("DEFAULT_HOSTNAME"), $http_port ? ":" . $http_port : "");
 $default_host = sprintf("%s%s", getenv("DEFAULT_HOSTNAME"), $https_port ? ":" . $https_port : "");
 $secure_host = sprintf("%s%s", getenv("SECURE_HOSTNAME"), $https_port ? ":" . $https_port : "");
-$tverify_host = sprintf("%s%s", getenv("TVERIFY_HOSTNAME"), $https_port ? ":" . $https_port : "");
 
 $csr_dir = getenv("CSR_DIRECTORY");
 $crt_dir = getenv("CRT_DIRECTORY");
 
 $base_urls = ["insecure" => sprintf("http://%s", $insecure_host), "normal" => sprintf("https://%s", $default_host),
-	"secure" => sprintf("https://%s", $secure_host), "tverify" => sprintf("https://%s", $tverify_host)];
+	"secure" => sprintf("https://%s", $secure_host)];
 
 // TODO: replace with $base_urls
 $_SESSION['_config']['normalhostname'] = $default_host;
 $_SESSION['_config']['securehostname'] = $secure_host;
-$_SESSION['_config']['tverify'] = $tverify_host;
 
 function sendmail($to, $subject, $message, $from, $replyto = "", $toname = "", $fromname = "", $errorsto = "",
 				  $use_utf8 = true) {
