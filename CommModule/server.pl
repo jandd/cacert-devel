@@ -15,7 +15,7 @@ use IPC::Open3;
 use File::Copy;
 use Digest::SHA qw(sha1_hex);
 
-#Protocol version:
+# protocol version:
 my $ver = 1;
 
 # debug flag, set to 1 for increased logging, set to 2 to additionally log hexdumps
@@ -24,27 +24,23 @@ my $debug = 0;
 # enable logging to stdout
 my $log_stdout = 1;
 
+# terminate in case of errors
 my $paranoid = 1;
 
-my $serialport = $ENV{'SERIAL_PORT'} || "/dev/ttyUSB0";
-
-my $CPSUrl = "http://www.cacert.org/cps.php";
-
+my $CPSUrl  = "http://www.cacert.org/cps.php";
 my $OCSPUrl = "http://ocsp.cacert.org/";
 
-my $gpgbin = "/usr/bin/gpg";
-
+my $gpgbin     = "/usr/bin/gpg";
 my $opensslbin = "/usr/bin/openssl";
 
+my $serialport      = $ENV{'SERIAL_PORT'}            || "/dev/ttyUSB0";
 my $work            = $ENV{'SIGNER_WORKDIR'}         || './work';
 my $ca_conf         = $ENV{'SIGNER_CA_CONFIG'}       || '/etc/ssl';
 my $ca_basedir      = $ENV{'SIGNER_BASEDIR'}         || '.';
 my $gpg_keyring_dir = $ENV{'SIGNER_GPG_KEYRING_DIR'} || '.';
+my $gpg_key_id      = $ENV{'SIGNER_GPG_ID'}          || 'gpg@cacert.org';
 
-#my $gpgID='gpgtest@cacert.at';
-my $gpgID = 'gpg@cacert.org';
-
-my %rootkeys = (
+my %identity_systems = (
   "1" => 5,    # X.509
   "2" => 1     # OpenPGP
 );
@@ -356,17 +352,17 @@ sub CheckSystem($$$$) {
   if (not defined($hashes{$hash})) {
     LogErrorAndDie "Hash algorithm unknown!\n";
   }
-  if (defined($rootkeys{$system})) {
-    if ($root < $rootkeys{$system}) {
+  if (defined($identity_systems{$system})) {
+    if ($root < $identity_systems{$system}) {
       return 1;
     }
     else {
       LogErrorAndDie
-        "Identity System $system has only $rootkeys{$system} root keys, key $root does not exist.\n";
+        "Identity System $system has only $identity_systems{$system} root keys, key $root does not exist.\n";
     }
   }
   else {
-    LogErrorAndDie "Identity System $system not supported";
+    LogErrorAndDie "Identity system $system not supported";
   }
 
   return 0;
@@ -429,7 +425,7 @@ sub SignX509($$$$$$$$) {
   SysLog("Subject: $subject\n");
   SysLog("SAN: $san\n");
 
-  my $extfile = "";
+  my $x509v3_extensions_file = "";
   if ($templates{$template} =~
     m/server/)  #??? Should we really do that for all and only for server certs?
   {
@@ -440,23 +436,23 @@ sub SignX509($$$$$$$$) {
     print OUT "extendedKeyUsage = clientAuth, serverAuth, nsSGC, msSGC\n";
     print OUT "authorityInfoAccess = OCSP;URI:$OCSPUrl\n";
 
-    my $CRLUrl = "";
+    my $crl_url = "";
     if ($root == 0) {
-      $CRLUrl = "http://crl.cacert.org/revoke.crl";
+      $crl_url = "http://crl.cacert.org/revoke.crl";
     }
     elsif ($root == 1) {
-      $CRLUrl = "http://crl.cacert.org/class3-revoke.crl";
+      $crl_url = "http://crl.cacert.org/class3-revoke.crl";
     }
     elsif ($root == 2) {
-      $CRLUrl = "http://crl.cacert.org/class3s-revoke.crl";
+      $crl_url = "http://crl.cacert.org/class3s-revoke.crl";
     }
     else {
-      $CRLUrl = "http://crl.cacert.org/root${root}.crl";
+      $crl_url = "http://crl.cacert.org/root${root}.crl";
     }
-    print OUT "crlDistributionPoints = URI:${CRLUrl}\n";
+    print OUT "crlDistributionPoints = URI:${crl_url}\n";
     print OUT "subjectAltName = $san\n" if (length($san));
     close OUT;
-    $extfile = " -extfile $wid/extfile ";
+    $x509v3_extensions_file = " -extfile $wid/extfile ";
   }
 
   my $cmd = ($request =~ m/SPKAC\s*=/) ? "-spkac" : "-subj '$subject' -in";
@@ -467,7 +463,7 @@ sub SignX509($$$$$$$$) {
     my $command = sprintf(
       "%s ca %s -config %s %s %s/request.csr -out %s/output.crt -days %d -key test -batch %s 2>&1",
       $opensslbin, $hashes{$hash}, $openssl_config, $cmd, $wid, $wid, $days,
-      $extfile);
+      $x509v3_extensions_file);
     my $do = qw/$command/;
     SysLog($do);
 
@@ -502,12 +498,23 @@ sub SignOpenPGP {
 
   my $wid = CreateWorkspace();
 
-  if (!-f "$gpg_keyring_dir/secring$root.gpg") {
-    LogErrorAndDie "Root Key not found: secring$root.gpg !\n";
+  my $secring;
+  my $pubring;
+  if (-d "$gpg_keyring_dir/gpg_root_$root") {
+    $secring = "$gpg_keyring_dir/gpg_root_$root/secring.gpg";
+    $pubring = "$gpg_keyring_dir/gpg_root_$root/pubring.gpg";
+  }
+  else {
+    $secring = "$gpg_keyring_dir/secring$root.gpg";
+    $pubring = "$gpg_keyring_dir/pubring$root.gpg";
   }
 
-  copy("$gpg_keyring_dir/secring$root.gpg", "$wid/secring.gpg");
-  copy("$gpg_keyring_dir/pubring$root.gpg", "$wid/pubring.gpg");
+  if (!-f $secring || !-f $pubring) {
+    LogErrorAndDie("GPG secret key ring $secring not found!\n");
+  }
+
+  copy($secring, "$wid/secring.gpg");
+  copy($pubring, "$wid/pubring.gpg");
 
   my $keyid = undef;
 
@@ -568,25 +575,18 @@ sub SignOpenPGP {
         else {
           LogErrorAndDie "ERROR: UNKNOWN $_\n";
         }
-
       }
 
       while (<$stderr>) {
         SysLog "Received from GnuPG on stderr: $_\n";
-
-        if (m/^key ([0-9A-F]{8}): public key/) {
-
-          #$keyid=$1;
-        }
       }
 
       waitpid($pid, 0);
-
     }
 
-    LogErrorAndDie "No KeyID found!" if (!defined($keyid));
+    LogErrorAndDie("No KeyID found!") if (!defined($keyid));
 
-    SysLog "Running GnuPG to Sign...\n";
+    SysLog("Running GnuPG to Sign...\n") if ($debug >= 1);
 
     {
       my ($stdin, $stdout, $stderr) =
@@ -594,12 +594,13 @@ sub SignOpenPGP {
 
       $ENV{'LANG'} = "";
 
-      my $line =
-        "$gpgbin --no-tty --default-key $gpgID --homedir $homedir --default-cert-expire $days"
-        . "d --ask-cert-expire --cert-policy-url $CPSUrl --command-fd 0 --status-fd 1 --logger-fd 2 --sign-key $keyid ";
-      SysLog($line . "\n");
+      my $command = sprintf(
+        "%s --no-tty --default-key %s --homedir %s --default-cert-expire %dd"
+          . " --ask-cert-expire --cert-policy-url %s --command-fd 0 --status-fd 1 --logger-fd 2 --sign-key %s",
+        $gpgbin, $gpg_key_id, $homedir, $days, $CPSUrl, $keyid);
+      SysLog(sprintf("%s\n", $command)) if ($debug >= 1);
 
-      my $pid = open3($stdin, $stdout, $stderr, $line);
+      my $pid = open3($stdin, $stdout, $stderr, $command);
 
       if ($pid == 0) {
         LogErrorAndDie "Cannot fork GnuPG.";
