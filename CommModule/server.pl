@@ -27,8 +27,8 @@ my $log_stdout = 1;
 # terminate in case of errors
 my $paranoid = 1;
 
-my $CPSUrl  = "http://www.cacert.org/cps.php";
-my $OCSPUrl = "http://ocsp.cacert.org/";
+my $cps_url  = $ENV{'SIGNER_CPS_URL'}  || "http://www.cacert.org/cps.php";
+my $ocsp_url = $ENV{'SIGNER_OCSP_URL'} || "http://ocsp.cacert.org/";
 
 my $gpgbin     = "/usr/bin/gpg";
 my $opensslbin = "/usr/bin/openssl";
@@ -39,6 +39,7 @@ my $ca_conf         = $ENV{'SIGNER_CA_CONFIG'}       || '/etc/ssl';
 my $ca_basedir      = $ENV{'SIGNER_BASEDIR'}         || '.';
 my $gpg_keyring_dir = $ENV{'SIGNER_GPG_KEYRING_DIR'} || '.';
 my $gpg_key_id      = $ENV{'SIGNER_GPG_ID'}          || 'gpg@cacert.org';
+my $gpg_cert_digest = $ENV{'SIGNER_GPG_CERT_DIGEST'} || 'SHA256';
 
 my %identity_systems = (
   "1" => 5,    # X.509
@@ -98,7 +99,7 @@ sub SysLog($) {
 }
 
 sub LogErrorAndDie($) {
-  SysLog($_[0]);
+  SysLog("$_[0]\n");
   if ($paranoid == 1) {
     die $_[0];
   }
@@ -179,7 +180,7 @@ sub unpack3array($) {
 
 sub SerialSettings {
   my $PortObj = $_[0];
-  LogErrorAndDie("Could not open Serial Port!\n") if (!defined($PortObj));
+  LogErrorAndDie("Could not open Serial Port!") if (!defined($PortObj));
   $PortObj->baudrate(115200);
   $PortObj->parity("none");
   $PortObj->databits(8);
@@ -212,9 +213,10 @@ sub SendIt($) {
 #Send data over the Serial Interface with handshaking:
 #Warning: This function is implemented paranoid. It exits the program in case something goes wrong.
 sub SendHandshakedParanoid($) {
+  SysLog("Sending response ...\n") if ($debug >= 1);
   SendIt("\x02");
 
-  LogErrorAndDie "Handshake uncompleted. Connection lost!"
+  LogErrorAndDie("Handshake uncompleted. Connection lost!")
     if (!scalar($sel->can_read(2)));
   usleep(1000000);
   my $data   = "";
@@ -231,8 +233,8 @@ sub SendHandshakedParanoid($) {
     while ($try_again == 1) {
       SendIt($_[0] . pack("C", $xor) . $magic_bytes);
 
-      LogErrorAndDie
-        "Packet receipt was not confirmed in 5 seconds. Connection lost!"
+      LogErrorAndDie(
+        "Packet receipt was not confirmed in 5 seconds. Connection lost!")
         if (!scalar($sel->can_read(5)));
 
       $data   = "";
@@ -246,15 +248,16 @@ sub SendHandshakedParanoid($) {
         $try_again = 1;
       }
       else {
-        LogErrorAndDie "I cannot send! $length " . unpack("C", $data) . "\n";
+        LogErrorAndDie("I cannot send! $length " . unpack("C", $data));
       }
     }
 
   }
   else {
     SysLog("!Cannot send! $length $data\n");
-    LogErrorAndDie("!Stopped sending.\n");
+    LogErrorAndDie("!Stopped sending.");
   }
+  SysLog("Done sending response.\n") if ($debug >= 1);
 }
 
 sub Receive {
@@ -274,7 +277,7 @@ sub Receive {
     my $tries         = 10000;
 
     while ($blockfinished != 1) {
-      LogErrorAndDie("Tried reading too often\n") if (($tries--) <= 0);
+      LogErrorAndDie("Tried reading too often") if (($tries--) <= 0);
 
       $data = "";
       if (!scalar($sel->can_read(2))) {
@@ -303,12 +306,12 @@ sub Receive {
     return ($block);
   }
   else {
-    LogErrorAndDie("Error: No Answer received, Timeout.\n")
+    LogErrorAndDie("Error: No Answer received, Timeout.")
       if (length($data) == 0);
-    LogErrorAndDie("Error: Wrong Startbyte: " . hexdump($data) . " !\n");
+    LogErrorAndDie(sprintf("Error: Wrong Startbyte: %s!", hexdump($data)));
   }
 
-  SysLog "Waiting on next request ...\n";
+  SysLog("Waiting on next request ...\n");
 
 }
 
@@ -347,7 +350,7 @@ sub Response($$$$$$$) {
 sub CheckSystem($$$$) {
   my ($system, $root, $template, $hash) = @_;
   if (not defined($templates{$template})) {
-    LogErrorAndDie "Template unknown!\n";
+    LogErrorAndDie("Template unknown!");
   }
   if (not defined($hashes{$hash})) {
     LogErrorAndDie "Hash algorithm unknown!\n";
@@ -415,11 +418,12 @@ sub SignX509($$$$$$$$) {
   $subject =~ s/\\x([A-F0-9]{2})/pack("C", hex($1))/egi;
   $san     =~ s/\\x([A-F0-9]{2})/pack("C", hex($1))/egi;
 
-  LogErrorAndDie "Invalid characters in SubjectAltName!\n"
+  LogErrorAndDie("Invalid characters in SubjectAltName!")
     if ($san =~ m/[ \n\r\t\x00#"'\\]/);
-  LogErrorAndDie "Invalid characters in Subject: "
-    . hexdump($subject)
-    . " - $subject\n"
+  LogErrorAndDie(sprintf(
+    "Invalid characters in Subject: %s - %s",
+    hexdump($subject), $subject
+  ))
     if ($subject =~ m/[\n\r\t\x00#"'\\]/);
 
   SysLog("Subject: $subject\n");
@@ -434,7 +438,7 @@ sub SignX509($$$$$$$$) {
     print OUT
       "keyUsage = critical, digitalSignature, keyEncipherment, keyAgreement\n";
     print OUT "extendedKeyUsage = clientAuth, serverAuth, nsSGC, msSGC\n";
-    print OUT "authorityInfoAccess = OCSP;URI:$OCSPUrl\n";
+    print OUT "authorityInfoAccess = OCSP;URI:$ocsp_url\n";
 
     my $crl_url = "";
     if ($root == 0) {
@@ -484,11 +488,11 @@ sub SignX509($$$$$$$$) {
       }
     }
     else {
-      LogErrorAndDie("Could not read the resulting certificate.\n");
+      LogErrorAndDie("Could not read the resulting certificate.");
     }
   }
   else {
-    LogErrorAndDie("Could not save request.\n");
+    LogErrorAndDie("Could not save request.");
   }
   unlink "$wid";
 }
@@ -510,7 +514,7 @@ sub SignOpenPGP {
   }
 
   if (!-f $secring || !-f $pubring) {
-    LogErrorAndDie("GPG secret key ring $secring not found!\n");
+    LogErrorAndDie("GPG secret key ring $secring not found!");
   }
 
   copy($secring, "$wid/secring.gpg");
@@ -518,9 +522,9 @@ sub SignOpenPGP {
 
   my $keyid = undef;
 
-  LogErrorAndDie "Invalid characters in SubjectAltName!\n"
+  LogErrorAndDie("Invalid characters in SubjectAltName!")
     if ($san =~ m/[ \n\r\t\x00#"'\\]/);
-  LogErrorAndDie "Invalid characters in Subject!\n"
+  LogErrorAndDie("Invalid characters in Subject!")
     if ($subject =~ m/[ \n\r\t\x00#"'\\;]/);
 
   if (open OUT, ">$wid/request.key") {
@@ -541,11 +545,11 @@ sub SignOpenPGP {
 
       my $pid = open3($stdin, $stdout, $stderr, $command);
       if ($pid == 0) {
-        LogErrorAndDie "Cannot fork GnuPG.";
+        LogErrorAndDie("Cannot fork GnuPG.");
       }
       $/ = "\n";
       while (<$stdout>) {
-        SysLog "Received from GnuPG: $_\n";
+        SysLog("Received from GnuPG: $_");
         if (m/^\[GNUPG:\] GOT_IT/) {
         }
         elsif (m/^\[GNUPG:\] GET_BOOL keyedit\.setpref\.okay/) {
@@ -564,7 +568,7 @@ sub SignOpenPGP {
         elsif (m/^\[GNUPG:\] IMPORT_RES/) {
         }
         elsif (m/^\[GNUPG:\] IMPORTED ([0-9A-F]{16})/) {
-          LogErrorAndDie "More than one OpenPGP sent at once!"
+          LogErrorAndDie("More than one OpenPGP sent at once!")
             if (defined($keyid));
           $keyid = $1;
         }
@@ -573,12 +577,12 @@ sub SignOpenPGP {
           # To crash or not to crash, thats the question.
         }
         else {
-          LogErrorAndDie "ERROR: UNKNOWN $_\n";
+          LogErrorAndDie("ERROR: UNKNOWN $_");
         }
       }
 
       while (<$stderr>) {
-        SysLog "Received from GnuPG on stderr: $_\n";
+        SysLog("Received from GnuPG on stderr: $_");
       }
 
       waitpid($pid, 0);
@@ -596,18 +600,20 @@ sub SignOpenPGP {
 
       my $command = sprintf(
         "%s --no-tty --default-key %s --homedir %s --default-cert-expire %dd"
-          . " --ask-cert-expire --cert-policy-url %s --command-fd 0 --status-fd 1 --logger-fd 2 --sign-key %s",
-        $gpgbin, $gpg_key_id, $homedir, $days, $CPSUrl, $keyid);
+          . " --ask-cert-expire --cert-policy-url %s --command-fd 0 --cert-digest-algo %s"
+          . " --status-fd 1 --logger-fd 2 --sign-key %s",
+        $gpgbin, $gpg_key_id, $homedir, $days, $cps_url, $gpg_cert_digest,
+        $keyid);
       SysLog(sprintf("%s\n", $command)) if ($debug >= 1);
 
       my $pid = open3($stdin, $stdout, $stderr, $command);
 
       if ($pid == 0) {
-        LogErrorAndDie "Cannot fork GnuPG.";
+        LogErrorAndDie("Cannot fork GnuPG.");
       }
       SysLog "Got PID $pid\n";
       while (<$stdout>) {
-        SysLog "Received from GnuPG: $_\n";
+        SysLog("Received from GnuPG: $_");
         if (m/^\[GNUPG:\] GET_BOOL keyedit\.sign_all\.okay/) {
           print $stdin "yes\n";
         }
@@ -623,8 +629,9 @@ sub SignOpenPGP {
           print $stdin "$days\n";
         }
         elsif (m/^\[GNUPG:\] GET_LINE sign_uid\.expire\s?$/) {
-          print
-            "DETECTED: Do you want your signature to expire at the same time? (Y/n) -> yes\n";
+          SysLog(
+            "DETECTED: Do you want your signature to expire at the same time? (Y/n) -> yes\n"
+          );
           print $stdin "no\n";
         }
         elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.replace_expired_okay/) {
@@ -640,7 +647,7 @@ sub SignOpenPGP {
           print $stdin "no\n";
         }
         elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.expired_okay/) {
-          print "The key has already expired!!!\n";
+          SysLog("The key has already expired!!!\n");
           print $stdin "no\n";
         }
         elsif (m/^\[GNUPG:\] GET_BOOL sign_uid\.nosig_okay/) {
@@ -665,33 +672,33 @@ sub SignOpenPGP {
           # To crash or not to crash, thats the question.
         }
         else {
-          LogErrorAndDie "ERROR: UNKNOWN $_\n";
+          LogErrorAndDie("ERROR: UNKNOWN $_");
         }
       }
 
       while (<$stderr>) {
-        SysLog "Received from GnuPG on stderr: $_\n";
-
-        if (m/^key ([0-9A-F]{8}): public key/) {
-
-          #$keyid=$1;
-        }
+        SysLog("Received from GnuPG on stderr: $_");
       }
 
       waitpid($pid, 0);
 
     }
 
-    #$do = `( $extras echo "365"; echo "y"; echo "2"; echo "y")|$gpgbin --no-tty --default-key gpg@cacert.org --homedir $homedir --batch --command-fd 0 --status-fd 1 --cert-policy-url http://www.cacert.org/index.php?id=10 --ask-cert-expire --sign-key $row[email] 2>&1`;
+    SysLog("Running GPG to export...\n");
 
-    SysLog "Running GPG to export...\n";
+    my $command;
+    my $result;
+    $command =
+      "$gpgbin --no-tty --homedir $homedir --export --armor $keyid > $wid/result.key";
+    SysLog("$command\n") if ($debug >= 1);
+    $result = qx/$command/;
+    SysLog($result) if ($debug >= 1 || $? != 0);
 
-    my $do =
-      `$gpgbin --no-tty --homedir $homedir --export --armor $keyid > $wid/result.key`;
-    SysLog $do;
-    $do =
-      `$gpgbin --no-tty --homedir $homedir --batch --yes --delete-key $keyid 2>&1`;
-    SysLog $do;
+    $command =
+      "$gpgbin --no-tty --homedir $homedir --batch --yes --delete-key $keyid 2>&1";
+    SysLog("$command\n") if ($debug >= 1);
+    $result = qx/$command/;
+    SysLog($result) if ($debug >= 1 || $? != 0);
 
     if (open IN, "<$wid/result.key") {
       undef $/;
@@ -700,9 +707,7 @@ sub SignOpenPGP {
       $/ = "\n";
 
       $content =~ s/^.*-----BEGIN/-----BEGIN/s;
-      SysLog "Antworte...\n";
       Response($ver, 2, 0, 0, $content, "", "");
-      SysLog "Done.\n";
 
       if ($debug != 0) {
         unlink "$wid/request.key";
@@ -711,11 +716,11 @@ sub SignOpenPGP {
 
     }
     else {
-      SysLog "NO Resulting Key found!";
+      SysLog("NO resulting key found!\n");
     }
   }
   else {
-    LogErrorAndDie "Kann Request nicht speichern!\n";
+    LogErrorAndDie("Cannot save OpenPGP public key for signing!");
   }
 
   unlink("$wid/secring.gpg");
@@ -726,9 +731,9 @@ sub SignOpenPGP {
 sub RevokeX509 {
   my ($root, $template, $hash, $days, $spkac, $request, $san, $subject) = @_;
 
-  LogErrorAndDie("Invalid characters in SubjectAltName!\n")
+  LogErrorAndDie("Invalid characters in SubjectAltName!")
     if ($san =~ m/[ \n\r\t\x00#"'\\]/);
-  LogErrorAndDie("Invalid characters in Hash!\n")
+  LogErrorAndDie("Invalid characters in Hash!")
     if (!$subject =~ m/^[0-9a-fA-F]+$/);
 
   SysLog("Revoke X.509 for $root\n");
@@ -847,23 +852,23 @@ sub RevokeX509 {
 }
 
 sub analyze($) {
-  SysLog("Analysiere ...\n") if ($debug >= 1);
+  SysLog("Analysiere ...\n")    if ($debug >= 1);
   SysLog(hexdump($_[0]) . "\n") if ($debug >= 2);
 
   my @fields = unpack3array(substr($_[0], 3, -9));
-  LogErrorAndDie(sprintf("Wrong number of parameters: %d\n", scalar(@fields)))
+  LogErrorAndDie(sprintf("Wrong number of parameters: %d", scalar(@fields)))
     if (scalar(@fields) != 4);
 
   SysLog(sprintf("Header: %s\n", hexdump($fields[0]))) if ($debug >= 2);
   my @bytes = unpack("C*", $fields[0]);
 
-  LogErrorAndDie("Header too short!\n") if (length($fields[0]) < 3);
+  LogErrorAndDie("Header too short!") if (length($fields[0]) < 3);
   LogErrorAndDie(sprintf(
-    "Version mismatch. Server does not support version %d, server only supports version %d!\n",
+    "Version mismatch. Server does not support version %d, server only supports version %d!",
     $bytes[0], $ver
   ))
     if ($bytes[0] != $ver);
-  LogErrorAndDie(sprintf("Header has wrong length: %d! Should be 9 bytes.\n",
+  LogErrorAndDie(sprintf("Header has wrong length: %d! Should be 9 bytes.",
     length($fields[0])))
     if (length($fields[0]) != 9);
 
@@ -901,7 +906,7 @@ sub analyze($) {
     SysLog("Handled REVOKE request\n");
   }
   else {
-    LogErrorAndDie("Unknown command\n");
+    LogErrorAndDie("Unknown command");
   }
 }
 
@@ -922,9 +927,9 @@ $PortObj->save("serialserver.conf");
 undef $PortObj;
 
 $PortObj = tie(*SER, 'Device::SerialPort', "serialserver.conf")
-  || LogErrorAndDie("Can't tie using Configuration_File_Name: $!\n");
+  || LogErrorAndDie("Can't tie using Configuration_File_Name: $!");
 
-LogErrorAndDie("Could not open Serial Interface!\n") if (not defined($PortObj));
+LogErrorAndDie("Could not open Serial Interface!") if (not defined($PortObj));
 SerialSettings($PortObj);
 
 SysLog("Serial interface opened: $PortObj\n");
@@ -954,4 +959,4 @@ while (@ready = $sel->can_read(15) && -f "./server.pl-active") {
 
 }
 
-LogErrorAndDie("Timeout! No data from client anymore!\n");
+LogErrorAndDie("Timeout! No data from client anymore!");
