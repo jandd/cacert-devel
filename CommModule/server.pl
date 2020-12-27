@@ -74,7 +74,7 @@ my %templates = (
 ########################################################
 
 # Global variables
-my $starttime   = 5 * 60;       # 5 minutes
+my $start_time  = 5 * 60;       # 5 minutes
 my $magic_bytes = "rie4Ech7";
 my Device::SerialPort $PortObj;
 my IO::Select $sel;
@@ -852,7 +852,7 @@ sub RevokeX509 {
 }
 
 sub analyze($) {
-  SysLog("Analysiere ...\n")    if ($debug >= 1);
+  SysLog("Analysiere ...\n") if ($debug >= 1);
   SysLog(hexdump($_[0]) . "\n") if ($debug >= 2);
 
   my @fields = unpack3array(substr($_[0], 3, -9));
@@ -937,7 +937,7 @@ SysLog("Serial interface opened: $PortObj\n");
 #Creating select() selector for improved reading:
 $sel = IO::Select->new(\*SER);
 
-$SIG{INT} = \&signal_handler;
+$SIG{INT}  = \&signal_handler;
 $SIG{TERM} = \&signal_handler;
 
 sub signal_handler {
@@ -947,7 +947,7 @@ sub signal_handler {
 SysLog("Server started. Waiting 5 minutes for contact from client ...\n");
 
 #When started, we wait for 5 minutes for the client to connect:
-my @ready = $sel->can_read($starttime);
+my @ready = $sel->can_read($start_time);
 
 my $count = 0;
 

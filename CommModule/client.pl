@@ -43,53 +43,26 @@ my $debug = 0;
 
 my $log_stdout = 1;
 
-my $serialport = $ENV{"SERIAL_PORT"};
-my $csr_dir;
-if ($ENV{'CSR_DIRECTORY'}) {
-  $csr_dir = $ENV{'CSR_DIRECTORY'};
-}
-else {
-  $csr_dir = '../csr';
-}
-my $crt_dir;
-if ($ENV{'CRT_DIRECTORY'}) {
-  $crt_dir = $ENV{'CRT_DIRECTORY'};
-}
-else {
-  $crt_dir = '../crt';
-}
-my $crl_dir;
-if ($ENV{'CRL_DIRECTORY'}) {
-  $crl_dir = $ENV{'CRL_DIRECTORY'};
-}
-else {
-  $crl_dir = '../www';
-}
-
 my $gpg_binary     = "/usr/bin/gpg";
 my $openssl_binary = "/usr/bin/openssl";
 
+my $serialport          = $ENV{"SERIAL_PORT"}         || "/dev/ttyUSB0";
+my $csr_dir             = $ENV{'CSR_DIRECTORY'}       || "../csr";
+my $crt_dir             = $ENV{'CRT_DIRECTORY'}       || '../crt';
+my $crl_dir             = $ENV{'CRL_DIRECTORY'}       || '../www';
+my $smtp_host           = $ENV{'SMTP_HOST'}           || 'localhost';
+my $smtp_port           = $ENV{'SMTP_PORT'}           || '25';
+my $smtp_helo_name      = $ENV{'SMTP_HELO_NAME'}      || "hlin.cacert.org";
+my $smtp_return_address = $ENV{'SMTP_RETURN_ADDRESS'} || "returns\@cacert.org";
+my $smtp_x_mailer       = $ENV{'SMTP_X_MAILER'}       || "CAcert.org Website";
+my $smtp_errors_to      = $ENV{'SMTP_ERRORS_TO'}      || $smtp_return_address;
+my $db_name             = $ENV{'MYSQL_WEBDB_DATABASE'};
+my $db_host             = $ENV{'MYSQL_WEBDB_HOSTNAME'};
+my $db_user             = $ENV{'MYSQL_WEBDB_USER'};
+my $db_password         = $ENV{'MYSQL_WEBDB_PASSWORD'};
+
 my %revoke_file =
   (2 => "$crl_dir/class3-revoke.crl", 1 => "$crl_dir/revoke.crl");
-
-my $smtp_host;
-if ($ENV{'SMTP_HOST'}) {
-  $smtp_host = $ENV{'SMTP_HOST'};
-}
-else {
-  $smtp_host = 'localhost';
-}
-my $smtp_port;
-if ($ENV{'SMTP_PORT'}) {
-  $smtp_port = $ENV{'SMTP_PORT'};
-}
-else {
-  $smtp_port = '25';
-}
-my $smtp_helo_name      = "hlin.cacert.org";
-my $smtp_return_address = "returns\@cacert.org";
-my $smtp_x_mailer       = "CAcert.org Website";
-my $smtp_errors_to      = "returns\@cacert.org";
 
 #End of configurations
 
@@ -110,14 +83,14 @@ my %monarr = (
   "Dec" => 12
 );
 
-my $dbh = DBI->connect(
-  "DBI:mysql:$ENV{'MYSQL_WEBDB_DATABASE'}:$ENV{'MYSQL_WEBDB_HOSTNAME'}",
-  $ENV{'MYSQL_WEBDB_USER'},
-  $ENV{'MYSQL_WEBDB_PASSWORD'},
-  { RaiseError => 1, AutoCommit => 1 }
-) || die("Error with the database connection.\n");
+my $magic_bytes = "rie4Ech7";
 
-sub readfile($) {
+my $dbh =
+  DBI->connect("DBI:mysql:$db_name:$db_host", $db_user, $db_password,
+  { RaiseError => 1, AutoCommit => 1 })
+  || die("Error with the database connection.\n");
+
+sub read_file($) {
   my $save = $/;
   undef $/;
   open READIN, "<$_[0]";
@@ -146,7 +119,7 @@ sub SysLog($) {
 }
 
 sub LogErrorAndDie($) {
-  SysLog($_[0]);
+  SysLog("$_[0]\n");
   if ($paranoid == 1) {
     die $_[0];
   }
@@ -154,7 +127,7 @@ sub LogErrorAndDie($) {
 
 foreach (keys %revoke_file) {
   next unless (-f $revoke_file{$_});
-  my $revoke_hash = sha1_hex(readfile($revoke_file{$_}));
+  my $revoke_hash = sha1_hex(read_file($revoke_file{$_}));
   SysLog("Root $_: Hash $revoke_file{$_} = $revoke_hash\n");
 }
 
@@ -179,33 +152,29 @@ sub recode {
   return $_[1];
 }
 
-SysLog("Opening Serial interface:\n");
-
 sub SerialSettings($) {
   my $PortObj = $_[0];
-  if (!defined($PortObj)) {
-    LogErrorAndDie("Could not open Serial Port!\n");
-  }
-  else {
-    $PortObj->baudrate(115200);
-    $PortObj->parity("none");
-    $PortObj->databits(8);
-    $PortObj->stopbits(1);
-  }
+  LogErrorAndDie("Could not open Serial Port!") if (!defined($PortObj));
+  $PortObj->baudrate(115200);
+  $PortObj->parity("none");
+  $PortObj->databits(8);
+  $PortObj->stopbits(1);
 }
+
+SysLog("Opening Serial interface:\n");
 
 #We have to open the SerialPort and close it again, so that we can bind it to a Handle
 if (!-f "serial.conf") {
-  my $PortObj = new Device::SerialPort($serialport);
+  my $PortObj = Device::SerialPort->new($serialport);
   SerialSettings($PortObj);
   $PortObj->save("serial.conf");
   undef $PortObj;
 }
 
 my Device::SerialPort $PortObj = tie(*SER, 'Device::SerialPort', "serial.conf")
-  || LogErrorAndDie("Can't tie using Configuration_File_Name: $!\n");
+  || LogErrorAndDie("Can't tie using serial.conf: $!");
 
-LogErrorAndDie("Could not open Serial Interface!\n") if (not defined($PortObj));
+LogErrorAndDie("Could not open Serial Interface!") if (not defined($PortObj));
 SerialSettings($PortObj);
 
 #open SER,">$serialport";
@@ -303,7 +272,7 @@ sub SendHandshaked($) {
   SysLog("Shaking hands ...\n") if ($debug >= 1);
   SendIt("\x02");
 
-  LogErrorAndDie("Handshake uncompleted. Connection lost2! $!\n")
+  LogErrorAndDie("Handshake uncompleted. Connection lost2! $!")
     if (!scalar($sel->can_read(20)));
   my $data   = "";
   my $length = read SER, $data, 1;
@@ -317,10 +286,10 @@ sub SendHandshaked($) {
 
     my $try_again = 1;
     while ($try_again == 1) {
-      SendIt($_[0] . pack("C", $xor) . "rie4Ech7");
+      SendIt($_[0] . pack("C", $xor) . $magic_bytes);
 
       LogErrorAndDie(
-        "Packet receipt was not confirmed in 5 seconds. Connection lost!\n")
+        "Packet receipt was not confirmed in 5 seconds. Connection lost!")
         if (!scalar($sel->can_read(5)));
 
       $data   = "";
@@ -335,13 +304,13 @@ sub SendHandshaked($) {
       }
       else {
         LogErrorAndDie(sprintf(
-          "I cannot send! %d %s\n", $length, unpack("C", $data)));
+          "I cannot send! %d %s", $length, unpack("C", $data)));
       }
     }
 
   }
   else {
-    LogErrorAndDie("!Cannot send! $length\n");
+    LogErrorAndDie("!Cannot send! $length");
   }
 }
 
@@ -362,12 +331,12 @@ sub Receive {
     my $tries          = 100000;
 
     while ($block_finished == 0) {
-      LogErrorAndDie("Tried reading too often\n") if (($tries--) <= 0);
+      LogErrorAndDie("Tried reading too often") if (($tries--) <= 0);
       SysLog("tries: $tries") if (!($tries % 10) && ($debug >= 1));
 
       $data = "";
       if (!scalar($sel->can_read(5))) {
-        LogErrorAndDie("Handshake uncompleted. Connection lost variant3! $!\n");
+        LogErrorAndDie("Handshake uncompleted. Connection lost variant3! $!");
         return;
       }
       $length = read SER, $data, 100, 0;
@@ -376,7 +345,7 @@ sub Receive {
       }
       $block_finished = defined(unpack3(substr($block, 0, -9))) ? 1 : 0;
 
-      if (!$block_finished and substr($block, -8, 8) eq "rie4Ech7") {
+      if (!$block_finished and substr($block, -8, 8) eq $magic_bytes) {
         SysLog("BROKEN Block detected!\n");
         SendIt("\x11");
         $block          = "";
@@ -390,9 +359,9 @@ sub Receive {
     return ($block);
   }
   else {
-    LogErrorAndDie("Error: No Answer received, Timeout.\n")
+    LogErrorAndDie("Error: No Answer received, Timeout.")
       if (length($data) == 0);
-    LogErrorAndDie("Error: Wrong Startbyte: " . hexdump($data) . " !\n");
+    LogErrorAndDie("Error: Wrong Startbyte: " . hexdump($data) . " !");
   }
 
   SysLog("Waiting on next request ...\n");
@@ -509,9 +478,9 @@ sub OpenPGPextractExpiryDate($) {
   my @date;
 
   open(RGPG, $gpg_binary . ' -vv ' . $_[0] . ' 2>&1 |')
-    or LogErrorAndDie('Can\'t start GnuPG($gpgbin): ' . $! . "\n");
+    || LogErrorAndDie(sprintf("Can't start GnuPG(%s): %s", $gpg_binary, $!));
   open(OUT, '> infogpg.txt')
-    or LogErrorAndDie('Can\'t open output file: infogpg.txt: ' . $!);
+    || LogErrorAndDie(sprintf("Can't open output file: infogpg.txt: %s", $!));
   $/ = "\n";
   while (<RGPG>) {
     print OUT $_;
@@ -936,7 +905,7 @@ sub RefreshCRLs() {
       my $crl_name = $revoke_file{$rootcert};
       my $revoke_hash;
       if (-f $crl_name) {
-        $revoke_hash = sha1_hex(readfile($crl_name));
+        $revoke_hash = sha1_hex(read_file($crl_name));
       }
       else {
         $revoke_hash = sha1_hex('');
@@ -974,7 +943,7 @@ sub RevokeCerts($$) {
       undef $/;
       my $content = <IN>;
       close IN;
-      my $revokehash = sha1_hex(readfile($crl_name));
+      my $revokehash = sha1_hex(read_file($crl_name));
 
       my $crl = Request($ver, 2, 1, $row{'rootcert'} - 1,
         0, 0, 365, 0, $content, "", $revokehash);
@@ -1107,7 +1076,7 @@ sub HandleGPG() {
 
 my $crlcheck = 0;
 
-$SIG{INT} = \&signal_handler;
+$SIG{INT}  = \&signal_handler;
 $SIG{TERM} = \&signal_handler;
 
 sub signal_handler {
