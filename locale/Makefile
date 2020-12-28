@@ -133,7 +133,7 @@ POT_UPLOAD_PATH := /var/www/Pootle/po/cacert/templates/messages.pot
 MANAGE_PY := /var/www/Pootle/manage.py
 
 VERSION := Production
-DESCRITPION := LibreSSL - CAcert web application (localisation files)
+DESCRIPTION := LibreSSL - CAcert web application (localisation files)
 COPYRIGHT_YEAR := 2004-$(shell date +\%Y)
 PACKAGE := LibreSSL
 
@@ -175,8 +175,9 @@ messages.pot: $(GETTEXT_FILES)
 	xgettext --output - --sort-by-file --copyright-holder "CAcert Inc." \
 		--package-name "CAcert" --package-version "$(VERSION)" \
 		--msgid-bugs-address "translations-admin@cacert.org" \
+		--keyword=_ \
 		--add-comments=TRANSLATORS $^ | \
 		# replace place holders in the lines before the first msgid\
-		sed '1,/^msgid/ { s/SOME DESCRIPTIVE TITLE/$(DESCRITPION)/; s/YEAR/$(COPYRIGHT_YEAR)/; s/PACKAGE/$(PACKAGE)/ }' \
+		sed '1,/^msgid/ { s/SOME DESCRIPTIVE TITLE/$(DESCRIPTION)/; s/YEAR/$(COPYRIGHT_YEAR)/; s/PACKAGE/$(PACKAGE)/ }' \
 		> $@
 

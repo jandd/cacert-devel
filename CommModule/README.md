@@ -29,7 +29,6 @@ Both `client.pl` and `server.pl` can be configured using a set of environment va
 Variable | Purpose | Default value
 --- | --- | ---
 `SERIAL_PORT` | Serial port for communication with the signer | `/dev/ttyUSB0`
-`CSR_DIR` | Directory where certificate signing requests are read from | `../csr`
 `CRT_DIR` | Directory where certificates are written | `../crt`
 `CRL_DIR` | Directory where certificate revocation lists are written | `../www`
 `SMTP_HOST` | Hostname of the SMTP server for sending confirmation mails | `localhost`
