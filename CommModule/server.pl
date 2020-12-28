@@ -590,9 +590,7 @@ sub openssl_sign_certificate {
     my $command = sprintf
         '%s ca %s -config %s %s %s -out %s -days %d -key test -batch %s 2>&1',
         $openssl_binary, $md_algorithm, $openssl_config, $cmd,
-        $request_file,
-        $certificate_file,
-        $days, $x509v3_extensions_file;
+        $request_file, $certificate_file, $days, $x509v3_extensions_file;
     my $pid = open3( undef, $stdout, $stdout, $command );
     sys_log( scalar <$stdout> );
     waitpid $pid, 0;
@@ -609,12 +607,12 @@ sub get_subject_command {
         if ( !$spkac == 1 ) {
             sys_log("WARNING missing SPKAC flag but SPKAC content\n");
         }
-        return "-spkac";
+        return '-spkac';
     }
     if ( $spkac == 1 ) {
         sys_log("WARNING SPKAC flag found but non SPKAC request received\n");
     }
-    return sprintf '-subj "%s -in', $subject;
+    return sprintf '-subj "%s" -in', $subject;
 }
 
 sub sign_x509 {
