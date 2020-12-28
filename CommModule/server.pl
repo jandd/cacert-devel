@@ -66,7 +66,7 @@ Readonly::Hash my %IDENTITY_SYSTEMS => (
     '1' => 5,    # X.509
     '2' => 1     # OpenPGP
 );
-Readonly::Hash my %MD_ALGORITHMS => (
+Readonly::Hash my %X509_MD_ALGORITHMS => (
     '0'  => q{},
     '1'  => '-md md5',
     '2'  => '-md sha1',
@@ -506,7 +506,7 @@ sub check_identity_system {
     if ( !defined $CA_TEMPLATES{$template} ) {
         log_error_and_die( sprintf 'CA template %s unknown!', $template );
     }
-    if ( !defined $MD_ALGORITHMS{$hash} ) {
+    if ( !defined $X509_MD_ALGORITHMS{$hash} ) {
         log_error_and_die( sprintf "Hash algorithm %s unknown!\n", $hash );
     }
     if ( defined $IDENTITY_SYSTEMS{$id_system} ) {
@@ -602,6 +602,21 @@ sub openssl_sign_certificate {
     return $content;
 }
 
+sub get_subject_command {
+    my ( $spkac, $request, $subject ) = @_;
+
+    if ( $request =~ m/SPKAC\s*=/xms ) {
+        if ( !$spkac == 1 ) {
+            sys_log("WARNING missing SPKAC flag but SPKAC content\n");
+        }
+        return "-spkac";
+    }
+    if ( $spkac == 1 ) {
+        sys_log("WARNING SPKAC flag found but non SPKAC request received\n");
+    }
+    return sprintf '-subj "%s -in', $subject;
+}
+
 sub sign_x509 {
     my ($arg_ref) = @_;
 
@@ -612,6 +627,7 @@ sub sign_x509 {
     my $request  = $arg_ref->{request};
     my $san      = $arg_ref->{san};
     my $subject  = $arg_ref->{subject};
+    my $spkac    = $arg_ref->{spkac};
 
     my $wid = create_workspace();
 
@@ -680,9 +696,7 @@ sub sign_x509 {
         }
     }
 
-    my $cmd =
-        ( $request =~ m/SPKAC\s*=/xms ) ? '-spkac' : sprintf '-subj "%s" -in',
-        $subject;
+    my $cmd              = get_subject_command( $spkac, $request, $subject );
     my $request_file     = "$wid/request.csr";
     my $certificate_file = "$wid/output.crt";
     open my $OUT, '>', $request_file
@@ -694,7 +708,7 @@ sub sign_x509 {
         or log_error_and_die("could not close $request_file: $OS_ERROR");
 
     my $content = openssl_sign_certificate(
-        {   md_algorithm     => $MD_ALGORITHMS{$hash},
+        {   md_algorithm     => $X509_MD_ALGORITHMS{$hash},
             openssl_config   => $openssl_config,
             cmd              => $cmd,
             request_file     => $request_file,
@@ -923,18 +937,9 @@ sub sign_openpgp {
     my $root    = $arg_ref->{root};
     my $days    = $arg_ref->{days};
     my $request = $arg_ref->{request};
-    my $san     = $arg_ref->{san};
-    my $subject = $arg_ref->{subject};
 
     my $wid = create_workspace();
     copy_keyring_to_workspace( $wid, $root );
-
-    if ( $san =~ m/[ \s\x00#"'\\]/xms ) {
-        log_error_and_die('Invalid characters in SubjectAltName!');
-    }
-    if ( $subject =~ m/[ \s\x00#"'\\;]/xms ) {
-        log_error_and_die('Invalid characters in Subject!');
-    }
 
     my $request_filename = "$wid/request.key";
     open my $OUT, '>', $request_filename
@@ -1115,11 +1120,11 @@ sub revoke_x509 {
     my $wid            = create_workspace();
     my $openssl_config = x509_config_file( $root, $template );
 
-    revoke_certificate( $request, $MD_ALGORITHMS{$hash}, $wid,
-        $openssl_config );
+    revoke_certificate( $request, $X509_MD_ALGORITHMS{$hash},
+        $wid, $openssl_config );
 
-    my $crl_content =
-        openssl_generate_crl( $MD_ALGORITHMS{$hash}, $openssl_config, $wid );
+    my $crl_content = openssl_generate_crl( $X509_MD_ALGORITHMS{$hash},
+        $openssl_config, $wid );
 
     mkdir "$ca_basedir/currentcrls/$root";
     my $new_crl_name = sprintf "$ca_basedir/currentcrls/$root/%s.crl",
@@ -1192,6 +1197,9 @@ sub analyze_block {
     my @fields = unpack3array( substr $block,
         $LENGTH_FIELD_SIZE, -( $MAGIC_BYTES_LENGTH + $CRC_LENGTH ) );
     if ( scalar(@fields) != $EXPECTED_FIELDS_IN_BLOCK ) {
+        foreach my $field (@fields) {
+            sys_log( sprintf "%s\n%s\n", hexdump($field), $field );
+        }
         log_error_and_die(
             sprintf 'Wrong number of parameters: %d instead of %d',
             scalar @fields,
@@ -1203,7 +1211,7 @@ sub analyze_block {
     if ( $debug >= 2 ) {
         sys_log( sprintf "Header: %s\n", hexdump($header) );
     }
-    my @header_bytes = unpack 'CCCCCCn', $header;
+    my @header_bytes = unpack 'CCCCCCnC', $header;
 
     if ( length($header) != $EXPECTED_HEADER_LENGTH ) {
         log_error_and_die(
@@ -1212,8 +1220,9 @@ sub analyze_block {
             $EXPECTED_HEADER_LENGTH
         );
     }
-    my ( $version, $command, $id_system, $root, $template, $hash, $days ) =
-        @header_bytes;
+    my ( $version, $command, $id_system, $root, $template, $hash, $days,
+        $spkac )
+        = @header_bytes;
 
     if ( $version != $PROTOCOL_VERSION ) {
         log_error_and_die(
@@ -1253,6 +1262,7 @@ sub analyze_block {
                     request  => $request,
                     san      => $san,
                     subject  => $subject,
+                    spkac    => $spkac,
                 }
             );
         }
@@ -1261,8 +1271,6 @@ sub analyze_block {
                 {   root    => $root,
                     days    => $days,
                     request => $request,
-                    san     => $san,
-                    subject => $subject,
                 }
             );
         }
