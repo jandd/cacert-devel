@@ -1,26 +1,39 @@
 #!/usr/bin/perl -w
 
-# (c) 2006-2020 by CAcert.org
+# CommModule - CAcert Communication Module
+# Copyright (c) 2006-2020 by CAcert.org
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; version 2 of the License.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
 # Server (running on the certificate machine)
 
 use strict;
 use warnings;
-use version;
-
 use charnames qw/:full/;
+
 use Carp;
 use Device::SerialPort qw(:PARAM :STAT 0.07);
+use Digest::SHA qw(sha1_hex);
 use English qw/-no_match_vars/;
-use POSIX;
+use File::Copy;
+use File::CounterFile;
 use IO::Handle;
 use IO::Select;
-use File::CounterFile;
-use Time::HiRes qw(usleep);
 use IPC::Open3;
-use File::Copy;
-use Digest::SHA qw(sha1_hex);
+use POSIX;
 use Readonly;
+use Time::HiRes qw(usleep);
 
 # protocol version:
 Readonly my $PROTOCOL_VERSION => 1;
@@ -150,10 +163,12 @@ sub hexdump {
     return $content;
 }
 
+Readonly my $ZERO_LENGTH_FIELD => "\N{NULL}\N{NULL}\N{NULL}";
+
 #pack3 packs together the length of the data in 3 bytes and the data itself, size limited to 16MB. In case the data is more than 16 MB, it is ignored, and a 0 Byte block is transferred
 sub pack3 {
     my ($bytes) = @_;
-    return "\N{NULL}\N{NULL}\N{NULL}" if ( !defined $bytes );
+    return $ZERO_LENGTH_FIELD if ( !defined $bytes );
     my $data = ( length($bytes) >= $MAX_BLOCK_SIZE ) ? q{} : $bytes;
     my $len  = pack 'N', length $data;
     return substr( $len, 1, $LENGTH_FIELD_SIZE ) . $data;
@@ -180,41 +195,44 @@ sub unpack3 {
     return substr $data, $LENGTH_FIELD_SIZE;
 }
 
-#unpack3array extracts a whole array of concatented packed data.
+#unpack3array extracts a whole array of concatenated packed data.
 sub unpack3array {
     my ($data) = @_;
     my @result_array = ();
     if ( ( !defined $data ) or length($data) < $LENGTH_FIELD_SIZE ) {
-        sys_log("Header data damaged\n");
+        sys_log("Begin of structure corrupt\n");
         return ();
     }
-    my $dataleft = $data;
-    while ( length($dataleft) >= $LENGTH_FIELD_SIZE ) {
+    my $data_left = $data;
+    while ( length($data_left) >= $LENGTH_FIELD_SIZE ) {
         if ( $debug >= 2 ) {
             sys_log(
                 sprintf "hexdump: %s\n",
                 hexdump(
-                    "\N{NULL}" . substr $dataleft,
+                    "\N{NULL}" . substr $data_left,
                     0, $LENGTH_FIELD_SIZE
                 )
             );
         }
-        my $len = unpack 'N', "\N{NULL}" . substr $dataleft, 0,
+        my $len = unpack 'N', "\N{NULL}" . substr $data_left, 0,
             $LENGTH_FIELD_SIZE;
         if ( $debug >= 1 ) {
-            sys_log( sprintf "len3: %d length(): %d length()-3: %d\n",
-                $len, length($dataleft),
-                ( length($dataleft) - $LENGTH_FIELD_SIZE ) );
+            sys_log(
+                sprintf "len3: %d length(): %d length()-3: %d\n",
+                $len,
+                length($data_left),
+                ( length($data_left) - $LENGTH_FIELD_SIZE )
+            );
         }
-        if ( length($dataleft) - $LENGTH_FIELD_SIZE < $len ) {
-            sys_log("Data ended prematurely\n");
+        if ( length($data_left) - $LENGTH_FIELD_SIZE < $len ) {
+            sys_log("Structure cut off\n");
             return ();
         }
-        push @result_array, substr $dataleft, $LENGTH_FIELD_SIZE, $len;
-        $dataleft = substr $dataleft, $LENGTH_FIELD_SIZE + $len;
+        push @result_array, substr $data_left, $LENGTH_FIELD_SIZE, $len;
+        $data_left = substr $data_left, $LENGTH_FIELD_SIZE + $len;
     }
-    if ( length($dataleft) != 0 ) {
-        sys_log("End of data block missing\n");
+    if ( length($data_left) != 0 ) {
+        sys_log("End of structure cut off\n");
         return ();
     }
     return @result_array;
@@ -264,7 +282,8 @@ sub send_data {
         $total += $bytes_written;
         $data = substr $data, $bytes_written;
         if ( $debug >= 1 ) {
-            sys_log( sprintf "i wrote: %d total: %d left: %d\n",
+            sys_log(
+                sprintf "wrote: %d bytes total: %d bytes left: %d bytes\n",
                 $bytes_written, $total, length $data );
         }
     }
@@ -281,7 +300,7 @@ Readonly my $WAIT_FOR_INITIAL_BYTES_MICROSECONDS => 1_000_000;
 
 #Send data over the Serial Interface with handshaking:
 #Warning: This function is implemented paranoid. It exits the program in case something goes wrong.
-sub send_handshake_paranoid {
+sub send_handshaked_paranoid {
     my ($bytes) = @_;
     if ( $debug >= 1 ) {
         sys_log("Sending response ...\n");
@@ -310,7 +329,9 @@ sub send_handshake_paranoid {
 
             if ( !scalar( $sel->can_read($WAIT_FOR_ACK_SECONDS) ) ) {
                 log_error_and_die(
-                    'Packet receipt was not confirmed in 5 seconds. Connection lost!'
+                    sprintf
+                        'Packet receipt was not confirmed in %d seconds. Connection lost!',
+                    $WAIT_FOR_ACK_SECONDS
                 );
             }
 
@@ -375,8 +396,7 @@ sub receive_block {
 
             $data = q{};
             if ( !scalar( $sel->can_read($WAIT_FOR_HANDSHAKE_SECONDS) ) ) {
-                sys_log("Timeout reading data!\n");
-                return;
+                log_error_and_die('Timeout reading data!');
             }
             $length = read SER, $data, $READ_BLOCK_SIZE, 0;
             if ( $length > 0 ) {
@@ -399,6 +419,17 @@ sub receive_block {
             {
                 sys_log("BROKEN Block detected!\n");
                 send_data($RESET_BYTE);
+                $block          = q{};
+                $block_finished = 0;
+                $tries          = $MAX_TRIES;
+            }
+
+            if ( $block_finished && !check_crc($block) ) {
+                sys_log("CRC error\n");
+                send_data($RESET_BYTE);
+                $block          = q{};
+                $block_finished = 0;
+                $tries          = $MAX_TRIES;
             }
         }
         if ( $debug >= 2 ) {
@@ -428,11 +459,15 @@ sub check_crc {
     my ($block) = @_;
     return 0 if ( length($block) < 1 );
     return 1 if ( $block eq "\N{NULL}" );
-    my $xor = 0;
-    foreach ( 0 .. length($block) - $CRC_LENGTH - 1 ) {
+    my $xor                   = 0;
+    my $trailing_bytes_length = $CRC_LENGTH + $MAGIC_BYTES_LENGTH;
+    foreach ( 0 .. length($block) - $trailing_bytes_length - 1 ) {
         $xor ^= unpack 'C', substr $block, $_, 1;
     }
-    return ( $xor eq unpack 'C', substr $block, -$CRC_LENGTH, $CRC_LENGTH )
+    return (
+        $xor eq unpack 'C',        substr $block,
+        -($trailing_bytes_length), $CRC_LENGTH
+        )
         ? 1
         : 0;
 }
@@ -449,7 +484,7 @@ sub send_response {
     my $argument2 =
         exists $arg_ref->{argument2} ? $arg_ref->{argument2} : q{};
 
-    send_handshake_paranoid(
+    send_handshaked_paranoid(
         pack3(
             pack3(
                 pack 'C*',  $version, $response_type,
@@ -1256,12 +1291,12 @@ sub analyze_block {
 
 # Start of execution
 my $timestamp = POSIX::strftime( '%Y-%m-%d %H:%M:%S', localtime );
-sys_log("Starting Server at $timestamp\n");
+sys_log("Starting server at $timestamp\n");
 
 mkdir "$work", $DIRECTORY_MODE;
 mkdir "$ca_basedir/currentcrls";
 
-sys_log("Opening Serial interface:\n");
+sys_log("Opening serial interface:\n");
 
 #We have to open the SerialPort and close it again, so that we can bind it to a Handle
 $PortObj = Device::SerialPort->new($serialport);
