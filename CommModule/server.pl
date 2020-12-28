@@ -39,6 +39,7 @@ my $ocsp_url = $ENV{'SIGNER_OCSP_URL'} || 'http://ocsp.cacert.org/';
 
 my $gpg_binary     = '/usr/bin/gpg';
 my $openssl_binary = '/usr/bin/openssl';
+my $xdelta_binary  = '/usr/bin/xdelta';
 
 my $serialport      = $ENV{'SERIAL_PORT'}            || '/dev/ttyUSB0';
 my $work            = $ENV{'SIGNER_WORKDIR'}         || './work';
@@ -704,6 +705,10 @@ sub copy_keyring_to_workspace {
     return;
 }
 
+Readonly my $RE_GPG_PREFIX   => qr/^\[GNUPG:\][ ]/xms;
+Readonly my $RE_GPG_GET_BOOL => qr/GET_BOOL[ ]/xms;
+Readonly my $RE_GPG_GET_LINE => qr/GET_LINE[ ]/xms;
+
 sub gpg_find_key_id {
     my ( $homedir, $request_file ) = @_;
     my $key_id = undef;
@@ -724,38 +729,29 @@ sub gpg_find_key_id {
         log_error_and_die('Cannot fork GnuPG.');
     }
 
+    my $re_ignored_responses = qr{
+    (?: GOT_IT | ALREADY_SIGNED | GOOD_PASSPHRASE | KEYEXPIRED | SIGEXPIRED | IMPORT_OK | IMPORT_RES )}xms;
+
     local $INPUT_RECORD_SEPARATOR = "\n";
     while (<$stdout>) {
         sys_log("Received from GnuPG: $_");
-        if (m/^\[GNUPG:\][ ]GET_BOOL[ ]keyedit[.]setpref[.]okay/xms) {
+        if (m/$RE_GPG_PREFIX $RE_GPG_GET_BOOL keyedit[.]setpref[.]okay/xms) {
             print {$stdin} "no\n"
                 or log_error_and_die(
                 "Could not write to stdin of gpg process: $OS_ERROR");
         }
-        elsif (m/^\[GNUPG:\][ ]IMPORTED[ ]([[:xdigit:]]{16})/xms) {
+        elsif (m/$RE_GPG_PREFIX IMPORTED[ ]([[:xdigit:]]{16})/xms) {
             if ( defined $key_id ) {
                 log_error_and_die('More than one OpenPGP sent at once!');
             }
             $key_id = $1;
         }
-        elsif (
-            m{
-      ^\[GNUPG:\][ ](
-      GOT_IT|
-      ALREADY_SIGNED|
-      GOOD_PASSPHRASE|
-      KEYEXPIRED|
-      SIGEXPIRED|
-      IMPORT_OK|
-      IMPORT_RES
-      )}xms
-            )
-        {
+        elsif (m/$RE_GPG_PREFIX $re_ignored_responses/xms) {
             if ( $debug >= 1 ) {
                 sys_log("$_ -> $1\n");
             }
         }
-        elsif (m/^\[GNUPG:\][ ]NODATA/xms) {
+        elsif (m/$RE_GPG_PREFIX NODATA/xms) {
 
             # To crash or not to crash, that's the question.
         }
@@ -801,27 +797,32 @@ sub gpg_sign_key {
         log_error_and_die('Cannot fork GnuPG.');
     }
     sys_log "Got PID $pid\n";
+
+    my $re_sign_uid_yes =
+        qr/(?: okay | expire_okay | replace_expired_okay | dupe_okay )/xms;
+    my $re_yes_flags =
+        qr/(?:keyedit[.]sign_all[.]okay | sign_uid[.]$re_sign_uid_yes)/xms;
+
+    my $re_sign_uid_no = qr/(?: revoke_okay | nosig_okay| v4_on_v3_okay )/xms;
+    my $re_no_flags =
+        qr/(?:keyedit[.](?:sign_revoked|setpref)[.]okay | sign_uid[.]$re_sign_uid_no)/xms;
+
+    my $re_ignored_responses =
+        qr/(?: GOT_IT | ALREADY_SIGNED| GOOD_PASSPHRASE| KEYEXPIRED | SIGEXPIRED )/xms;
+
     while (<$stdout>) {
         sys_log("Received from GnuPG: $_");
-        if (m{^\[GNUPG:\][ ]GET_BOOL[ ](
-      keyedit[.]sign_all[.]okay|
-      sign_uid[.]okay|
-      sign_uid[.]expire_okay|
-      sign_uid[.]replace_expired_okay|
-      sign_uid[.]dupe_okay
-      )}xms
-            )
-        {
+        if (m/$RE_GPG_PREFIX $RE_GPG_GET_BOOL $re_yes_flags/xms) {
             print {$stdin} "yes\n"
                 or log_error_and_die(
                 "could not write to stdin of gpg process: $OS_ERROR");
         }
-        elsif (m/^\[GNUPG:\][ ]GET_LINE[ ]siggen[.]valid\s?$/xms) {
+        elsif (m/$RE_GPG_PREFIX $RE_GPG_GET_LINE siggen[.]valid\s?$/xms) {
             print {$stdin} "$days\n"
                 or log_error_and_die(
                 "could not write to stdin of gpg process: $OS_ERROR");
         }
-        elsif (m/^\[GNUPG:\][ ]GET_LINE[ ]sign_uid[.]expire\s?$/xms) {
+        elsif (m/$RE_GPG_PREFIX $RE_GPG_GET_LINE sign_uid[.]expire\s?$/xms) {
             sys_log(
                 "DETECTED: Do you want your signature to expire at the same time? (Y/n) -> yes\n"
             );
@@ -829,42 +830,24 @@ sub gpg_sign_key {
                 or log_error_and_die(
                 "could not write to stdin of gpg process: $OS_ERROR");
         }
-        elsif (
-            m{^\[GNUPG:\][ ]GET_BOOL[ ](
-      keyedit[.]sign_revoked[.]okay|
-      sign_uid[.]revoke_okay|
-      sign_uid[.]nosig_okay|
-      sign_uid[.]v4_on_v3_okay|
-      keyedit[.]setpref[.]okay
-      )}xms
-            )
-        {
+        elsif (m/$RE_GPG_PREFIX $RE_GPG_GET_BOOL $re_no_flags/xms) {
             print {$stdin} "no\n"
                 or log_error_and_die(
                 "could not write to stdin of gpg process: $OS_ERROR");
         }
-        elsif (m/^\[GNUPG:\][ ]GET_BOOL[ ]sign_uid[.]expired_okay/xms) {
+        elsif (m/$RE_GPG_PREFIX $RE_GPG_GET_BOOL sign_uid[.]expired_okay/xms)
+        {
             sys_log("The key has already expired!!!\n");
             print {$stdin} "no\n"
                 or log_error_and_die(
                 "could not write to stdin of gpg process: $OS_ERROR");
         }
-        elsif (
-            m{
-      ^\[GNUPG:\][ ](
-      GOT_IT|
-      ALREADY_SIGNED|
-      GOOD_PASSPHRASE|
-      KEYEXPIRED|
-      SIGEXPIRED
-      )}xms
-            )
-        {
+        elsif (m/$RE_GPG_PREFIX $re_ignored_responses/xms) {
             if ( $debug >= 1 ) {
                 sys_log("read $1\n");
             }
         }
-        elsif (m/^\[GNUPG:\][ ]NODATA/xms) {
+        elsif (m/$RE_GPG_PREFIX NODATA/xms) {
 
             # To crash or not to crash, thats the question.
         }
@@ -987,12 +970,69 @@ sub openssl_generate_crl {
     $command =
         "$openssl_binary crl -inform PEM -in $temporary_crl -outform DER";
     $pid = open3( undef, $stdout, $stdout, $command );
-    unlink $temporary_crl;
-    my $content = <$stdout>;
+    my $content;
+    do {
+        local $INPUT_RECORD_SEPARATOR = undef;
+        $content = <$stdout>;
+    };
     close $stdout or log_error_and_die("could not close stdout: $OS_ERROR");
     waitpid $pid, 0;
+    unlink $temporary_crl;
 
     return $content;
+}
+
+sub build_crl_delta {
+    my ( $old_crl, $new_crl, $root, $wid ) = @_;
+
+    my $stdout         = IO::Handle->new();
+    my $xdelta_patch   = "$wid/delta$root.diff";
+    my $xdelta_command = sprintf '%s delta %s %s %s', $xdelta_binary,
+        $old_crl, $new_crl, $xdelta_patch;
+    my $pid = open3( undef, $stdout, $stdout, $xdelta_command );
+    if ( $debug >= 1 ) {
+        local $INPUT_RECORD_SEPARATOR = undef;
+        sys_log( sprintf 'xdelta output: %s', <$stdout> );
+    }
+    waitpid $pid, 0;
+    my $content = read_file($xdelta_patch);
+    unlink $xdelta_patch;
+    return $content;
+}
+
+sub delete_old_crls {
+    my ( $root, $client_hash ) = @_;
+
+    sys_log("Deleting old CRLs...\n");
+    foreach ( glob "$ca_basedir/currentcrls/$root/*" ) {
+        if ( $_ ne "$ca_basedir/currentcrls/$root/$client_hash.crl" ) {
+            sys_log("Deleting $_\n");
+            unlink;
+        }
+    }
+    sys_log("Done with deleting old CRLs.\n");
+    return;
+}
+
+sub revoke_certificate {
+    my ( $request, $wid, $md_algorithm, $openssl_config ) = @_;
+
+    if ( length $request > 0 ) {
+        my $request_filename = "$wid/request.crt";
+        open my $OUT, '>', $request_filename
+            or log_error_and_die(
+            "could not open request file $request_filename for writing: $OS_ERROR"
+            );
+        print {$OUT} $request
+            or log_error_and_die(
+            "could not write request to $request_filename: $OS_ERROR");
+        close $OUT
+            or log_error_and_die(
+            "could not close request file $request_filename: $OS_ERROR");
+        openssl_revoke_certificate( $md_algorithm, $openssl_config,
+            $request_filename );
+    }
+    return;
 }
 
 Readonly my $EMPTY_STRING_HASH => sha1_hex(q{});
@@ -1028,14 +1068,7 @@ sub revoke_x509 {
 
     if ( $client_hash eq $current_hash ) {
         sys_log("Hash matches current CRL.\n");
-        sys_log("Deleting old CRLs...\n");
-        foreach ( glob "$ca_basedir/currentcrls/$root/*" ) {
-            if ( $_ ne "$ca_basedir/currentcrls/$root/$client_hash.crl" ) {
-                sys_log("Deleting $_\n");
-                unlink;
-            }
-        }
-        sys_log("Done with deleting old CRLs.\n");
+        delete_old_crls( $root, $client_hash );
         if ( $client_hash eq $EMPTY_STRING_HASH ) {
             sys_log("Client has empty CRL\n");
         }
@@ -1044,24 +1077,11 @@ sub revoke_x509 {
         }
     }
 
-    my $wid              = create_workspace();
-    my $openssl_config   = x509_config_file( $root, $template );
-    my $request_filename = "$wid/request.crt";
+    my $wid            = create_workspace();
+    my $openssl_config = x509_config_file( $root, $template );
 
-    if ( length $request > 0 ) {
-        open my $OUT, '>', $request_filename
-            or log_error_and_die(
-            "could not open request file $request_filename for writing: $OS_ERROR"
-            );
-        print {$OUT} $request
-            or log_error_and_die(
-            "could not write request to $request_filename: $OS_ERROR");
-        close $OUT
-            or log_error_and_die(
-            "could not close request file $request_filename: $OS_ERROR");
-        openssl_revoke_certificate( $MD_ALGORITHMS{$hash}, $openssl_config,
-            $request_filename );
-    }
+    revoke_certificate( $request, $MD_ALGORITHMS{$hash}, $wid,
+        $openssl_config );
 
     my $crl_content =
         openssl_generate_crl( $MD_ALGORITHMS{$hash}, $openssl_config, $wid );
@@ -1078,24 +1098,28 @@ sub revoke_x509 {
         or log_error_and_die("could not close $new_crl_name: $OS_ERROR");
 
     if ( $is_current == 1 ) {
-        sys_log("Schicke aktuelles Delta...\n");
-        my $xdelta_command =
-            "xdelta delta revoke-root$root.crl $new_crl_name delta$root.diff";
-        sys_log("$xdelta_command\n");
-        system $xdelta_command;
-        send_response( $PROTOCOL_VERSION, $RESPONSE_TYPES{REVOKE},
-            { content => read_file("delta$root.diff") } );
+        sys_log("send current CRL delta...\n");
+        send_response(
+            $PROTOCOL_VERSION,
+            $RESPONSE_TYPES{REVOKE},
+            {   content => build_crl_delta(
+                    "revoke-root$root.crl", $new_crl_name, $root, $wid
+                )
+            }
+        );
     }
     else {
         if ( -f "$ca_basedir/currentcrls/$root/$client_hash.crl" ) {
-            sys_log("Schicke altes Delta...\n");
-            my $xdelta_command =
-                "xdelta delta $ca_basedir/currentcrls/$root/$client_hash.crl $new_crl_name delta$root.diff";
-            sys_log("$xdelta_command\n");
-            system $xdelta_command;
-
-            send_response( $PROTOCOL_VERSION, $RESPONSE_TYPES{REVOKE},
-                { content => read_file("delta$root.diff") } );
+            sys_log("send CRL delta for client CRL...\n");
+            send_response(
+                $PROTOCOL_VERSION,
+                $RESPONSE_TYPES{REVOKE},
+                {   content => build_crl_delta(
+                        "$ca_basedir/currentcrls/$root/$client_hash.crl",
+                        $new_crl_name, $root, $wid
+                    )
+                }
+            );
         }
         else {
             sys_log("Out of Sync! Sending full CRL...\n");
