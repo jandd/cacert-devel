@@ -104,16 +104,19 @@ $(LANGS): %: $(MO_FILE_TEMPLATE)
 $(LANGS:%=$(MO_FILE_TEMPLATE)): $(MO_FILE_TEMPLATE): $(PO_FILE_TEMPLATE)
 	mkdir -p $(@D)
 #filter obsolete translations
-	grep --invert-match '^#~ ' $< | \
-		msgfmt --check --output-file $@ -
+	if [ ! -f '$@' ] || [ '$<' -nt '$@' ]; then \
+		grep --invert-match '^#~ ' $< | \
+			msgfmt --check --output-file $@ - ; \
+	fi
 
 
 .PHONY: $(LANGS:%=$(PO_FILE_TEMPLATE))
 $(LANGS:%=$(PO_FILE_TEMPLATE)):
 	mkdir -p $(@D)
-	curl --silent --fail '$(@:$(PO_FILE_TEMPLATE)=$(PO_URL_TEMPLATE))' | \
-		php -f escape_special_chars.php \
-		> $@
+	curl --remote-time --silent --fail --output '$@.tmp' '$(@:$(PO_FILE_TEMPLATE)=$(PO_URL_TEMPLATE))'
+	if [ ! -f '$@' ] || [ '$@.tmp' -nt '$@' ]; then \
+		php -f escape_special_chars.php < '$@.tmp' > '$@' ; \
+	fi
 
 
 

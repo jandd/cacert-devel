@@ -1,6 +1,7 @@
 # Language files are imported from translingo
 # => Ignore them
 # Use make if you need new ones
-*.po
-*.pot
 *.mo
+*.po
+*.po.tmp
+*.pot
