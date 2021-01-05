@@ -42,6 +42,7 @@ use Time::HiRes qw(usleep);
 
 my $paranoid = 1;
 
+# seem like debug 2 breaks checksum byte
 my $debug = 0;
 
 my $log_stdout = 1;
@@ -1142,6 +1143,10 @@ sub x509_refresh_crl {
     if ( length $crl ) {
         my $temporary_crl = "$crl_name.tmp";
         my $crl_patch     = "$crl_name.patch";
+
+        if ($debug >= 2) {
+            sys_log(sprintf "received crl\n%s\n", hexdump($crl));
+        }
 
         if ( $crl =~ m/^-----BEGIN[ ]X509[ ]CRL-----/xms ) {
             my $crl_filename = "$crl_name.pem";
