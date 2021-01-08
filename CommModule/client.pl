@@ -744,7 +744,7 @@ sub openpgp_extract_expiry_date {
     local $INPUT_RECORD_SEPARATOR = "\n";
     while (<$output>) {
         if ( $debug >= 1 ) {
-            sys_log("$_\n");
+            sys_log("$_");
         }
         if (m/^\s*version[ ]\d+,[ ]created[ ](\d+),[ ]md5len[ ]0,[ ]sigclass[ ](?:0x[[:xdigit:]]+|\d+)\s*$/xms
             )
